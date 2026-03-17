@@ -186,11 +186,20 @@ df -h /mnt/nfs/teams
 
 ### 7.3 fstab 영구 마운트
 
-`/etc/fstab`에 추가:
+부팅 순서에 따라 네트워크가 준비되기 전에 NFS 마운트를 시도하는 문제를 방지하기 위해 아래를 먼저 설정합니다:
+
+```bash
+sudo systemctl unmask systemd-networkd-wait-online.service
+sudo systemctl enable systemd-networkd-wait-online.service
+```
+
+`/etc/fstab`에 추가 (`x-systemd.automount` 옵션 포함):
 
 ```
-210.125.91.94:/teams  /mnt/nfs/teams  nfs4  nfsvers=4.2,_netdev,hard,intr,timeo=600,retrans=2  0  0
+210.125.91.94:/teams  /mnt/nfs/teams  nfs4  nfsvers=4.2,_netdev,hard,intr,timeo=600,retrans=2,x-systemd.automount,x-systemd.mount-timeout=60  0  0
 ```
+
+> **참고:** `x-systemd.automount`는 부팅 시 NFS 마운트가 실패해도 시스템이 정상 부팅되고, 실제 접근 시점에 자동 마운트를 재시도합니다. 정전 후 부팅 순서 문제로 마운트가 실패하는 상황을 방지합니다.
 
 적용:
 
@@ -205,10 +214,19 @@ teamctl-xfs.sh가 스토리지 서버의 nfsctl.sh를 SSH로 호출하기 위한
 
 ```bash
 sudo mkdir -p /opt/mlops/keys
-sudo chmod 700 /opt/mlops/keys
 
 sudo ssh-keygen -t ed25519 -C "teamctl->nfsctl" -f /opt/mlops/keys/nfsctl_ed25519
+
+# keys 디렉토리: miruware 그룹 읽기/실행 허용
+sudo chmod 750 /opt/mlops/keys
+sudo chown root:miruware /opt/mlops/keys
+
+# 개인키: miruware 소유로 변경 (sudo 없이 ssh 호출 가능하도록)
+sudo chown miruware:miruware /opt/mlops/keys/nfsctl_ed25519
 sudo chmod 600 /opt/mlops/keys/nfsctl_ed25519
+
+# 공개키
+sudo chown miruware:miruware /opt/mlops/keys/nfsctl_ed25519.pub
 sudo chmod 644 /opt/mlops/keys/nfsctl_ed25519.pub
 ```
 
@@ -221,7 +239,7 @@ sudo cat /opt/mlops/keys/nfsctl_ed25519.pub
 ### 7.5 원격 연결 테스트
 
 ```bash
-sudo ssh -i /opt/mlops/keys/nfsctl_ed25519 \
+ssh -i /opt/mlops/keys/nfsctl_ed25519 \
   -o BatchMode=yes \
   -o StrictHostKeyChecking=accept-new \
   nfsadmin@210.125.91.94 "sudo /opt/nfs/nfsctl.sh audit"

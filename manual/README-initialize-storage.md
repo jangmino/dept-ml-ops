@@ -156,7 +156,7 @@ sudo chown -R nfsadmin:nfsadmin /home/nfsadmin/.ssh
 ### 4.3 연결 테스트 (딥러닝 서버에서 실행)
 
 ```bash
-sudo ssh -i /opt/mlops/keys/nfsctl_ed25519 \
+ssh -i /opt/mlops/keys/nfsctl_ed25519 \
   -o BatchMode=yes \
   -o StrictHostKeyChecking=accept-new \
   nfsadmin@210.125.91.94 "sudo /opt/nfs/nfsctl.sh audit"
