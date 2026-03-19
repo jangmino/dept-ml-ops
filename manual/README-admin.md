@@ -10,11 +10,11 @@
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  GPU 서버 (210.125.91.95)                       │
-│  PRO 6000 × 4, NVMe 7TB                        │
+│  GPU 서버 (210.125.91.95)                        │
+│  PRO 6000 × 4, NVMe 7TB                         │
 │                                                 │
-│  /data (XFS+prjquota) ─ 팀별 로컬 워크스페이스  │
-│  /mnt/nfs/teams ─────── NFS 마운트 (스토리지)   │
+│  /data (XFS+prjquota) ─ 팀별 로컬 워크스페이스        │
+│  /mnt/nfs/teams ─────── NFS 마운트 (스토리지)       │
 │                                                 │
 │  teamctl-xfs.sh ──SSH──→ nfsctl.sh (원격 호출)  │
 │                                                 │
@@ -94,7 +94,7 @@ sudo /opt/mlops/teamctl-xfs.sh audit
 sudo xfs_quota -x -c 'report -p -n' /data
 
 # 3) NFS 쿼터 (스토리지 서버에서 직접 또는 원격)
-sudo ssh -i /opt/mlops/keys/nfsctl_ed25519 nfsadmin@210.125.91.94 \
+ssh -i /opt/mlops/keys/nfsctl_ed25519 nfsadmin@210.125.91.94 \
   "sudo /opt/nfs/nfsctl.sh quota"
 ```
 
@@ -159,7 +159,7 @@ sudo cat /data/ssh/team01/authorized_keys
 ```bash
 sudo /opt/mlops/teamctl-xfs.sh fix-perms team01
 ```
-
+- 필요시 [FAQ: fix-perms 설명 참고](#q-fix-perms-team-은-무엇을-하나요)
 ---
 
 ## 4. 쿼터 관리
@@ -365,3 +365,33 @@ sudo teamctl-xfs.sh reset TEAM
 sudo teamctl-xfs.sh remove TEAM [--purge-data] [--purge-nfs] [--purge-nfs-dir]
 sudo teamctl-xfs.sh set-image TEAM image:tag
 ```
+
+---
+
+## 13. FAQ
+
+### Q. `fix-perms TEAM` 은 무엇을 하나요?
+
+```bash
+sudo /opt/mlops/teamctl-xfs.sh fix-perms team01
+```
+
+SSH 키 디렉토리의 소유자와 권한을 올바르게 복구합니다. 컨테이너 재생성이나 수동 작업 후 권한이 틀어졌을 때 사용합니다.
+
+**대상 경로:** `/data/ssh/team01/`
+
+| 대상 | 소유자 | 권한 | 의미 |
+|------|--------|------|------|
+| `/data/ssh/team01/` (디렉토리) | `root:12001` | `750` | 팀 그룹은 읽기+진입 가능, 외부는 접근 불가 |
+| `/data/ssh/team01/authorized_keys` | `root:12001` | `640` | 팀 그룹은 읽기만 가능, 쓰기는 root만 |
+
+**권한 값 해석:**
+
+- `750` = 소유자(rwx) / 그룹(r-x) / 기타(---)
+- `640` = 소유자(rw-) / 그룹(r--) / 기타(---)
+
+**왜 이 권한이어야 하나?**
+OpenSSH는 `authorized_keys`에 그룹/기타 쓰기 권한이 있으면 해당 키를 무시합니다. `640`은 sshd가 파일을 읽을 수 있으면서도 팀원이 직접 수정하지 못하도록 하는 최소 권한입니다.
+
+**언제 사용하나?**
+`audit` 결과에서 SSH 관련 이상이 표시되거나, `add-key` 후에도 SSH 접속이 안 될 때 실행합니다.
