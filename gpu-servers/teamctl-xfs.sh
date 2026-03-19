@@ -162,7 +162,7 @@ compose_remove_team(){
   compose_has_team "${team}" || return 0
 
   # Remove block starting at "  team:" until next "  <name>:" or EOF
-  awk -v team="  "team":" '
+  awk -v team="  ${team}:" '
     BEGIN{blk=0}
     $0==team {blk=1; next}
     blk==1 && $0 ~ /^  [A-Za-z0-9._-]+:/ {blk=0}
