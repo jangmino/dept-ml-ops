@@ -127,16 +127,16 @@ sudo mkdir -p /data/teams /data/ssh /data/ssh_backups
 ```bash
 cd ~
 mkdir -p work && cd work
-git clone https://github.com/jangmino/my_dockers
+git clone https://github.com/jangmino/dept-ml-ops
 ```
 
 ### 4.2 스크립트 배포
 
 ```bash
 sudo mkdir -p /opt/mlops
-sudo cp ~/work/my_dockers/dept-mlops/Dockerfile /opt/mlops/
-sudo cp ~/work/my_dockers/dept-mlops/docker-entrypoint.sh /opt/mlops/
-sudo cp ~/work/my_dockers/dept-mlops/teamctl-xfs.sh /opt/mlops/
+sudo cp ~/work/dept-ml-ops/Dockerfile /opt/mlops/
+sudo cp ~/work/dept-ml-ops/docker-entrypoint.sh /opt/mlops/
+sudo cp ~/work/dept-ml-ops/teamctl-xfs.sh /opt/mlops/
 sudo chmod +x /opt/mlops/teamctl-xfs.sh
 ```
 
@@ -145,7 +145,7 @@ sudo chmod +x /opt/mlops/teamctl-xfs.sh
 ## 5. Docker 이미지 빌드
 
 ```bash
-cd ~/work/my_dockers/dept-mlops
+cd ~/work/dept-ml-ops
 
 # 태그는 날짜 등으로 지정
 sudo docker build -t jangminnature/mlops:dept-20260208 .
@@ -281,7 +281,7 @@ sudo /opt/mlops/teamctl-xfs.sh audit
 ### 9.1 소스 배포 및 기동
 
 ```bash
-sudo cp -r ~/work/my_dockers/dept-mlops/monitoring/ /opt/
+sudo cp -r ~/work/dept-ml-ops/monitoring/ /opt/
 cd /opt/monitoring
 sudo docker compose up -d
 sudo docker compose ps
@@ -328,7 +328,7 @@ Prometheus 접속 후 **Status → Targets** 에서 모든 타겟(prometheus, no
 - [ ] `/data` 마운트 + fstab 등록 (`prjquota` 옵션 포함)
 - [ ] 네트워크 설정 (IP, 게이트웨이, DNS)
 - [ ] `/data/teams`, `/data/ssh`, `/data/ssh_backups` 디렉터리 생성
-- [ ] `my_dockers` 리포지토리 클론
+- [ ] `dept-ml-ops` 리포지토리 클론
 - [ ] `teamctl-xfs.sh` 및 관련 파일 `/opt/mlops/`에 배포
 - [ ] Docker 이미지 빌드
 - [ ] GPU 모드 설정 (`set-gpu-mode`)

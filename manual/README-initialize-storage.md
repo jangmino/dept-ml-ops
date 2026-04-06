@@ -204,7 +204,7 @@ sudo systemctl restart nfs-kernel-server
 
 ```bash
 sudo mkdir -p /opt/nfs
-sudo cp ~/work/my_dockers/dept-mlops/nfsctl.sh /opt/nfs/nfsctl.sh
+sudo cp ~/work/dept-ml-ops/storage-servers/nfsctl.sh /opt/nfs/nfsctl.sh
 sudo chmod +x /opt/nfs/nfsctl.sh
 ```
 
