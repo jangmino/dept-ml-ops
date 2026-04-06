@@ -1,4 +1,20 @@
 services:
+  # ── Reverse Proxy ──────────────────────────────────
+  # 유일한 외부 노출 포트 (80). Grafana를 프록시한다.
+  nginx:
+    image: nginx:alpine
+    container_name: mon_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - /opt/monitoring/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - grafana
+    networks:
+      - monitoring
+
+  # ── Metrics Storage ────────────────────────────────
   prometheus:
     image: prom/prometheus:latest
     container_name: mon_prometheus
@@ -8,28 +24,39 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=15d
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"   # localhost만 — SSH 터널로 접근
     volumes:
       - /opt/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
       - /opt/monitoring/prometheus/rules:/etc/prometheus/rules:ro
+    networks:
+      - monitoring
 
+  # ── Dashboard ──────────────────────────────────────
   grafana:
     image: grafana/grafana:latest
     container_name: mon_grafana
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"   # localhost만 — nginx가 프록시
     environment:
-      # 최초 접속: admin / admin  (접속 후 변경 권장)
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      # 비밀번호는 Grafana UI에서 변경 완료 (grafana_data 볼륨에 저장됨)
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SERVER_ROOT_URL=http://210.125.91.95
+      - GF_SECURITY_COOKIE_SAMESITE=lax
+      - GF_SECURITY_DISABLE_GRAVATAR=true
+      - GF_SNAPSHOTS_EXTERNAL_ENABLED=false
     volumes:
       - grafana_data:/var/lib/grafana
       - /opt/monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
     depends_on:
       - prometheus
+    networks:
+      - monitoring
 
+  # ── Exporters (내부 전용 — 호스트 포트 없음) ──────
   node_exporter:
     image: prom/node-exporter:latest
     container_name: mon_node_exporter
@@ -37,17 +64,15 @@ services:
     pid: host
     command:
       - --path.rootfs=/host
-    ports:
-      - "9100:9100"
     volumes:
       - /:/host:ro,rslave
+    networks:
+      - monitoring
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
     container_name: mon_cadvisor
     restart: unless-stopped
-    ports:
-      - "8080:8080"
     privileged: true
     devices:
       - /dev/kmsg:/dev/kmsg
@@ -61,14 +86,13 @@ services:
     command:
       - "--housekeeping_interval=10s"
       - "--docker_only=false"
+    networks:
+      - monitoring
 
   dcgm_exporter:
     image: nvidia/dcgm-exporter:latest
     container_name: mon_dcgm_exporter
     restart: unless-stopped
-    ports:
-      - "9400:9400"
-
     deploy:
       resources:
         reservations:
@@ -76,24 +100,32 @@ services:
             - driver: nvidia
               count: -1
               capabilities: ["gpu"]
-
     cap_add:
       - SYS_ADMIN
-    # 만약 여기서도 권한/접근 오류가 나면 아래 한 줄로 대체(또는 추가)하면 거의 해결됨
+    # 권한/접근 오류 시 아래로 대체 가능
     # privileged: true
+    networks:
+      - monitoring
 
+  # ── Alert Routing ──────────────────────────────────
   alertmanager:
     image: prom/alertmanager:latest
     container_name: mon_alertmanager
     restart: unless-stopped
     ports:
-      - "9093:9093"
+      - "127.0.0.1:9093:9093"   # localhost만 — SSH 터널로 접근
     volumes:
       - /opt/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
       - --storage.path=/alertmanager
+    networks:
+      - monitoring
+
+networks:
+  monitoring:
+    driver: bridge
 
 volumes:
   prometheus_data:

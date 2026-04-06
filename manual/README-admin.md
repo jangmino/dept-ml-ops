@@ -280,7 +280,40 @@ sudo docker compose -f /opt/mlops/compose.yaml down
 
 ---
 
-## 10. 장애 체크리스트
+## 10. 모니터링 대시보드 접속
+
+### Grafana (팀원 공개)
+
+```
+http://210.125.91.95
+```
+
+nginx 리버스 프록시(포트 80)를 통해 접속합니다. Grafana 로그인 필요.
+
+### Prometheus / AlertManager (관리자 전용)
+
+외부에서 직접 접근 불가 (localhost 바인딩). SSH 터널을 사용합니다.
+
+```bash
+# Prometheus (로컬 브라우저에서 http://localhost:9090)
+ssh -L 9090:127.0.0.1:9090 <user>@210.125.91.95
+
+# AlertManager (로컬 브라우저에서 http://localhost:9093)
+ssh -L 9093:127.0.0.1:9093 <user>@210.125.91.95
+```
+
+### 모니터링 스택 관리
+
+```bash
+cd /opt/monitoring
+sudo docker compose up -d      # 기동
+sudo docker compose ps          # 상태 확인
+sudo docker compose down        # 중지
+```
+
+---
+
+## 11. 장애 체크리스트
 
 ### 컨테이너 재시작 루프
 
@@ -330,7 +363,7 @@ docker exec <container_name> nvidia-smi
 
 ---
 
-## 11. 일상 운영 체크리스트
+## 12. 일상 운영 체크리스트
 
 ### 일일 점검
 
@@ -348,7 +381,7 @@ docker exec <container_name> nvidia-smi
 
 ---
 
-## 12. teamctl-xfs.sh 전체 명령 레퍼런스
+## 13. teamctl-xfs.sh 전체 명령 레퍼런스
 
 ```
 sudo teamctl-xfs.sh set-gpu-mode 4|8
@@ -368,7 +401,7 @@ sudo teamctl-xfs.sh set-image TEAM image:tag
 
 ---
 
-## 13. FAQ
+## 14. FAQ
 
 ### Q. `fix-perms TEAM` 은 무엇을 하나요?
 
@@ -395,3 +428,48 @@ OpenSSH는 `authorized_keys`에 그룹/기타 쓰기 권한이 있으면 해당 
 
 **언제 사용하나?**
 `audit` 결과에서 SSH 관련 이상이 표시되거나, `add-key` 후에도 SSH 접속이 안 될 때 실행합니다.
+
+---
+
+### Q. `reset` 과 `remove` 의 차이는 무엇인가요?
+
+#### 한눈에 비교
+
+| 항목 | `reset TEAM` | `remove TEAM` |
+|------|:---:|:---:|
+| 컨테이너 정지 | ✅ | ✅ |
+| 컨테이너 삭제 | ✅ | ✅ |
+| `compose.yaml` 서비스 블록 제거 | ❌ 유지 | ✅ 제거 |
+| 로컬 데이터 (`/data/teams/<team>`) | ❌ 유지 | `--purge-data` 시 삭제 |
+| SSH 키 (`/data/ssh/<team>`) | ❌ 유지 | `--purge-data` 시 삭제 |
+| XFS 쿼터 매핑 | ❌ 유지 | `--purge-data` 시 삭제 |
+| NFS 쿼터/폴더 (스토리지 서버) | ❌ 유지 | `--purge-nfs` / `--purge-nfs-dir` 시 삭제 |
+
+#### `reset` — 컨테이너만 내리기 (데이터 보존)
+
+```bash
+sudo /opt/mlops/teamctl-xfs.sh reset team01
+# 이후 다시 올리기:
+sudo docker compose -f /opt/mlops/compose.yaml up -d team01
+```
+
+컨테이너 프로세스만 제거합니다. 데이터·쿼터·compose.yaml·SSH 키 모두 유지되므로 `up -d`로 그대로 재기동할 수 있습니다. 이미지 교체, 재시작, 일시 중단 시 사용합니다.
+
+#### `remove` — 팀 완전 삭제
+
+```bash
+# 컨테이너 + compose.yaml 제거 (데이터 보존)
+sudo /opt/mlops/teamctl-xfs.sh remove team01
+
+# 로컬 데이터까지 삭제
+sudo /opt/mlops/teamctl-xfs.sh remove team01 --purge-data
+
+# 로컬 + NFS 쿼터/폴더 전부 삭제
+sudo /opt/mlops/teamctl-xfs.sh remove team01 --purge-data --purge-nfs --purge-nfs-dir
+```
+
+컨테이너를 내리고 `compose.yaml`에서 서비스 블록을 제거합니다. 플래그에 따라 로컬 데이터와 NFS까지 삭제할 수 있습니다.
+
+#### `reset` 후 `remove` 실행
+
+`remove`는 내부에서 stop/rm을 다시 실행하지만 `|| true`로 처리되므로, 이미 `reset`한 팀에 `remove`를 실행해도 안전합니다.
