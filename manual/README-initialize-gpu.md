@@ -287,11 +287,15 @@ sudo docker compose up -d
 sudo docker compose ps
 ```
 
+> **보안 구조:** nginx 리버스 프록시(포트 80)만 외부에 노출됩니다.
+> Prometheus(9090), AlertManager(9093)는 localhost 바인딩이므로 SSH 터널로 접근합니다.
+> Node Exporter, cAdvisor, DCGM Exporter는 호스트 포트 없이 Docker 내부 네트워크로만 통신합니다.
+
 ### 9.2 Grafana 설정
 
-접속: `http://<서버IP>:3000/`
+접속: `http://<서버IP>/` (nginx 프록시, 포트 80)
 
-초기 계정: `admin` / `admin` → 로그인 후 비밀번호 변경
+초기 계정: `admin` / `admin` → **로그인 후 반드시 비밀번호 변경**
 
 #### 대시보드 Import
 
@@ -303,9 +307,18 @@ sudo docker compose ps
 | Docker (cAdvisor) | `13946` | 소스: Prometheus 선택 |
 | NVIDIA DCGM Exporter | `12239` | 소스: Prometheus 선택 |
 
-### 9.3 Prometheus
+### 9.3 Prometheus 접속 (관리자)
 
-접속: `http://<서버IP>:9090/`
+외부에서 직접 접근 불가. SSH 터널을 사용합니다.
+
+```bash
+# 로컬 PC에서 실행 → 브라우저에서 http://localhost:9090
+ssh -L 9090:127.0.0.1:9090 <user>@<서버IP>
+```
+
+### 9.4 scrape 타겟 확인
+
+Prometheus 접속 후 **Status → Targets** 에서 모든 타겟(prometheus, node, cadvisor, dcgm)이 **UP** 상태인지 확인합니다.
 
 ---
 
@@ -322,5 +335,6 @@ sudo docker compose ps
 - [ ] NFS 클라이언트 설치 + `/mnt/nfs/teams` 마운트 + fstab 등록
 - [ ] 스토리지 서버 원격 제어용 SSH 키 생성 + 등록 + 연결 테스트
 - [ ] 팀 생성 (`--nfs` 포함) + 컨테이너 기동 + audit 검증
-- [ ] 모니터링 스택 기동 (Grafana + Prometheus)
-- [ ] Grafana 대시보드 Import (1860, 13946, 12239)
+- [ ] 모니터링 스택 기동 + nginx 프록시 동작 확인
+- [ ] Grafana 비밀번호 변경 + 대시보드 Import (1860, 13946, 12239)
+- [ ] Prometheus scrape 타겟 전체 UP 확인 (SSH 터널)
