@@ -22,7 +22,8 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.time=45d
+      - --storage.tsdb.retention.size=50GB
     ports:
       - "127.0.0.1:9090:9090"   # localhost만 — SSH 터널로 접근
     volumes:

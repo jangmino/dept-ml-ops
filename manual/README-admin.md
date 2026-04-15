@@ -473,3 +473,98 @@ sudo /opt/mlops/teamctl-xfs.sh remove team01 --purge-data --purge-nfs --purge-nf
 #### `reset` 후 `remove` 실행
 
 `remove`는 내부에서 stop/rm을 다시 실행하지만 `|| true`로 처리되므로, 이미 `reset`한 팀에 `remove`를 실행해도 안전합니다.
+
+---
+
+## 15. GPU 사용률 감사 및 회수
+
+장기간 GPU를 거의 사용하지 않는 팀을 식별하여 리소스를 회수·재배정하기 위한 절차입니다. 감사는 Prometheus에 누적된 DCGM 메트릭을 기반으로 하며, 관리자가 `/opt/mlops/gpu-audit.sh`를 수동 실행하여 리포트를 받습니다.
+
+### 사전 조건
+
+- Prometheus 데이터 보관 기간: **45일** (`monitoring/docker-compose.yaml`)
+- 감사 스크립트 및 설정 파일:
+  - `/opt/mlops/gpu-audit.sh` — 본체
+  - `/opt/mlops/gpu-audit-exempt.txt` (선택) — 면제 팀 목록
+  - `/opt/mlops/audit-hosts.tsv` (선택, 구서버 편입 시) — 서버 ↔ SSH 대상 매핑
+
+설치·옵션 상세는 [../monitoring/gpu-audit/README.md](../monitoring/gpu-audit/README.md) 참조.
+
+### 기본 감사 실행
+
+```bash
+# 최근 30일 평균 10% 미만 → LOW 표시
+sudo /opt/mlops/gpu-audit.sh
+```
+
+출력 예:
+
+```
+SERVER     TEAM       GPUs              AVG_UTIL   STATUS
+------     ----       ----              --------   ------
+gpu-new    team01     0                  42.10%   OK
+gpu-new    team02     1                   3.82%   LOW
+gpu-new    team03     2                   0.15%   LOW (exempt)
+```
+
+### 판정 기준 가이드
+
+| 30일 평균 사용률 | 상태 | 조치 |
+|------------------|------|------|
+| ≥10% | OK | 조치 없음 |
+| 5–10% | LOW (약) | 1차 경고, 활용 계획 확인 |
+| <5% | LOW (강) | 1차 경고 → 2차 경고 → 회수 절차 |
+| NO_DATA | — | 최근 생성 팀인지 먼저 확인, 아니면 DCGM 수집 상태 점검 |
+
+**판정 전 확인사항**:
+- 학기 초·중간고사·방학 직후 등 계절성 저사용 가능성
+- 해당 팀이 학부 수업/공동 연구실 용도로 **정상적으로 저사용**이라면 면제 목록에 추가
+- 배치형 워크로드(주 1–2회 대량 학습)라면 `--days 45`로 더 넓은 구간 재확인
+
+### 권장 워크플로 (경고 → 회수)
+
+1. **월 1회 정기 감사**
+   ```bash
+   sudo /opt/mlops/gpu-audit.sh --days 30 --threshold 10 --format csv > /tmp/audit-$(date +%Y%m).csv
+   ```
+   결과에서 `LOW` 상태 팀을 추려냅니다.
+
+2. **1차 알림 (이메일)**
+   - 대상: `LOW` 팀의 대표 연락처
+   - 내용: 최근 30일 평균 사용률 공지, 활용 계획·예외 사유 회신 요청
+   - 유예: 2주
+   - 필요 시 면제 처리 (사유 확인 후 `/opt/mlops/gpu-audit-exempt.txt`에 팀 추가)
+
+3. **2주 후 재감사**
+   ```bash
+   sudo /opt/mlops/gpu-audit.sh --days 14 --threshold 10
+   ```
+   여전히 `LOW`면 2차 알림: 회수 예고, 1주 추가 유예.
+
+4. **회수 실행**
+   ```bash
+   # 컨테이너만 정지 (데이터 보존)
+   sudo /opt/mlops/teamctl-xfs.sh reset <team>
+   ```
+   데이터는 보존되므로, 팀의 이의 제기 시 `docker compose up -d <team>`로 즉시 복구 가능합니다. 재배정 확정 후에 `remove` 또는 쿼터 축소로 전환합니다.
+
+5. **재배정**
+   - GPU를 다른 팀에 재할당할 경우: 기존 팀 `remove` → 새 팀 `create --gpu <id>`
+   - 또는 여유 GPU로 보관하다가 신규 팀 배정 시 사용
+
+### 면제 팀 관리
+
+수업용/공용 컨테이너 등 저사용이 정상인 팀은 면제 목록에 추가합니다.
+
+```bash
+sudo tee -a /opt/mlops/gpu-audit-exempt.txt <<'EOF'
+# 학부 수업용 (저사용 정상)
+team07
+EOF
+```
+
+감사 결과에서 해당 팀은 `LOW (exempt)`로 구분 표시되어 경고 대상에서 제외됩니다.
+
+### 구서버 편입 이후
+
+`audit-hosts.tsv`에 구서버를 추가하고 Prometheus scrape 대상에 구서버 DCGM exporter가 등록되면, 스크립트 변경 없이 자동으로 `team11-49` 까지 감사 범위에 포함됩니다.
