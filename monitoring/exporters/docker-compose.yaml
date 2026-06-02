@@ -1,0 +1,60 @@
+# 구 GPU 서버용 exporter 전용 스택
+# 중앙 Prometheus(gpu-new)가 이 서버의 메트릭을 원격 scrape 한다.
+#
+# 사용법:
+#   1. .env 파일에 SERVER_IP=<이 서버의 IP> 설정
+#   2. sudo docker compose up -d
+#
+# 방화벽:
+#   sudo ufw allow from 210.125.91.95 to any port 9100
+#   sudo ufw allow from 210.125.91.95 to any port 8080
+#   sudo ufw allow from 210.125.91.95 to any port 9400
+
+services:
+  node_exporter:
+    image: prom/node-exporter:latest
+    container_name: mon_node_exporter
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.rootfs=/host
+    ports:
+      - "${SERVER_IP}:9100:9100"
+    volumes:
+      - /:/host:ro,rslave
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: mon_cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    ports:
+      - "${SERVER_IP}:8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    command:
+      - "--housekeeping_interval=10s"
+      - "--docker_only=false"
+
+  dcgm_exporter:
+    image: nvidia/dcgm-exporter:latest
+    container_name: mon_dcgm_exporter
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: -1
+              capabilities: ["gpu"]
+    cap_add:
+      - SYS_ADMIN
+    ports:
+      - "${SERVER_IP}:9400:9400"

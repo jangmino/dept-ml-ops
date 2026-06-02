@@ -7,17 +7,63 @@ scrape_configs:
     static_configs:
       - targets: ["prometheus:9090"]
 
+  # ── Node Exporter (호스트 CPU/메모리/디스크) ──
   - job_name: node
     static_configs:
       - targets: ["node_exporter:9100"]
+        labels:
+          server: "gpu-new"
+      # 구 서버 — IP 확정 후 주석 해제
+      # - targets: ["210.125.91.??:9100"]
+      #   labels:
+      #     server: "gpu-old1"
+      # - targets: ["210.125.91.??:9100"]
+      #   labels:
+      #     server: "gpu-old2"
+      # - targets: ["210.125.91.??:9100"]
+      #   labels:
+      #     server: "gpu-old3"
+      # - targets: ["210.125.91.??:9100"]
+      #   labels:
+      #     server: "gpu-old4"
 
+  # ── cAdvisor (컨테이너 메트릭) ──
   - job_name: cadvisor
     static_configs:
       - targets: ["cadvisor:8080"]
+        labels:
+          server: "gpu-new"
+      # - targets: ["210.125.91.??:8080"]
+      #   labels:
+      #     server: "gpu-old1"
+      # - targets: ["210.125.91.??:8080"]
+      #   labels:
+      #     server: "gpu-old2"
+      # - targets: ["210.125.91.??:8080"]
+      #   labels:
+      #     server: "gpu-old3"
+      # - targets: ["210.125.91.??:8080"]
+      #   labels:
+      #     server: "gpu-old4"
 
+  # ── DCGM Exporter (GPU 메트릭) ──
   - job_name: dcgm
     static_configs:
       - targets: ["dcgm_exporter:9400"]
+        labels:
+          server: "gpu-new"
+      # - targets: ["210.125.91.??:9400"]
+      #   labels:
+      #     server: "gpu-old1"
+      # - targets: ["210.125.91.??:9400"]
+      #   labels:
+      #     server: "gpu-old2"
+      # - targets: ["210.125.91.??:9400"]
+      #   labels:
+      #     server: "gpu-old3"
+      # - targets: ["210.125.91.??:9400"]
+      #   labels:
+      #     server: "gpu-old4"
 
 alerting:
   alertmanagers:

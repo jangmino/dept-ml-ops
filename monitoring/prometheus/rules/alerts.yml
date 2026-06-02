@@ -8,8 +8,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Node exporter down"
-          description: "node_exporter is down for more than 1 minute."
+          summary: "{{ $labels.server }} — Node exporter down"
+          description: "node_exporter is down on {{ $labels.server }} ({{ $labels.instance }})."
 
       # (2) 디스크 여유 공간 부족 (10% 미만)
       - alert: DiskSpaceLow
@@ -20,8 +20,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Disk space low (<10% free)"
-          description: "Filesystem {{ $labels.mountpoint }} is below 10% free on {{ $labels.instance }}."
+          summary: "{{ $labels.server }} — Disk space low (<10% free)"
+          description: "{{ $labels.server }}의 {{ $labels.mountpoint }}이 10% 미만 ({{ $labels.instance }})."
 
       # (3) 메모리 사용률 높음 (95% 이상)
       - alert: MemoryUsageHigh
@@ -31,8 +31,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Memory usage high (>95%)"
-          description: "Memory usage is above 95% on {{ $labels.instance }}."
+          summary: "{{ $labels.server }} — Memory usage high (>95%)"
+          description: "{{ $labels.server }}의 메모리 사용률 95% 초과 ({{ $labels.instance }})."
 
   - name: container_alerts
     rules:
@@ -43,8 +43,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "cAdvisor down"
-          description: "cAdvisor is down for more than 1 minute."
+          summary: "{{ $labels.server }} — cAdvisor down"
+          description: "{{ $labels.server }}의 cAdvisor가 1분 이상 다운 ({{ $labels.instance }})."
 
       # (5) 컨테이너 재시작 급증(5분 동안 3회 이상)
       - alert: ContainerRestartStorm
@@ -53,8 +53,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Container restart storm"
-          description: "A container restarted more than 3 times in 5 minutes (check containers)."
+          summary: "{{ $labels.server }} — Container restart storm"
+          description: "{{ $labels.server }}에서 컨테이너가 5분간 3회 이상 재시작."
 
   - name: gpu_alerts
     rules:
@@ -65,8 +65,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "DCGM exporter down"
-          description: "dcgm-exporter is down for more than 1 minute."
+          summary: "{{ $labels.server }} — DCGM exporter down"
+          description: "{{ $labels.server }}의 dcgm-exporter가 1분 이상 다운 ({{ $labels.instance }})."
 
       # (7) GPU 온도 높음 (기본 85C)
       # dcgm-exporter 버전에 따라 메트릭명이 다를 수 있어.
@@ -79,8 +79,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "GPU temperature high (>85C)"
-          description: "GPU temperature is high. Investigate cooling/load."
+          summary: "{{ $labels.server }} — GPU temperature high (>85C)"
+          description: "{{ $labels.server }}의 GPU 온도가 85°C 초과. 냉각/부하 확인 필요."
 
       # (8) GPU 메모리 사용률 높음 (95% 이상)
       # 대시보드에서 확인되는 메트릭에 따라 조정 가능
@@ -91,5 +91,5 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "GPU memory usage high (>95%)"
-          description: "GPU memory usage is above 95%."
+          summary: "{{ $labels.server }} — GPU memory usage high (>95%)"
+          description: "{{ $labels.server }}의 GPU 메모리 사용률 95% 초과."
