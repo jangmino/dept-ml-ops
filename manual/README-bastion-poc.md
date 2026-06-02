@@ -28,7 +28,7 @@
 | **ProxyJump** | OpenSSH 7.3(2016)에 추가된 기능. `ssh -J <중간호스트> <목적지>` 또는 `~/.ssh/config`의 `ProxyJump` 키워드. 중간 호스트(=bastion)를 거쳐 자동으로 최종 호스트에 접속한다. |
 | **TCP forwarding (포트 포워딩)** | SSH 연결을 터널로 삼아 다른 호스트의 TCP 포트로 패킷을 중계하는 기능. ProxyJump의 실제 동작 원리. |
 | **PermitOpen** | sshd 설정 또는 `authorized_keys` 옵션. **이 SSH 세션이 어느 호스트:포트로 터널을 열 수 있는지** 화이트리스트 지정. |
-| **restrict** | `authorized_keys` 줄 앞에 붙는 옵션. PTY, 에이전트 포워딩, X11, 명령 실행 등 **모든 부가 권한을 차단**하고 `permitopen` 등으로 필요한 것만 다시 열어주는 가장 엄격한 모드. |
+| **restrict** | `authorized_keys` 줄 앞에 붙는 옵션. PTY, 에이전트 포워딩, X11, 명령 실행 등 **모든 부가 권한을 차단**하고 `permitopen` 등으로 필요한 것만 다시 열어주는 가장 엄격한 모드. **단 일부 OpenSSH 빌드(예: Ubuntu 24.04)에서 `restrict + permitopen` 조합이 의도대로 동작하지 않는 사례가 있어, 본 POC는 키 단위 `restrict` 대신 sshd `Match User` 블록(§3 참고)에서 정책을 일괄 적용하고, 키 단위에는 `permitopen`만 둠**. |
 | **ForceCommand** | sshd 설정 항목. 어떤 명령을 받든 **이 명령만** 실행. `/usr/sbin/nologin`을 걸면 셸은 안 떠도 ProxyJump 터널링은 정상 동작 (TCP 채널은 셸과 무관). |
 | **fingerprint (지문)** | 공개키의 해시. SSH 로그에 어떤 키로 인증되었는지 fingerprint가 남으므로, 키를 학생별로 1개 발급해두면 누가 들어왔는지 추적 가능. |
 
@@ -134,21 +134,22 @@ sudo chmod 600 /home/jump/.ssh/authorized_keys
 
 `nologin` 셸이지만 ProxyJump(TCP 포워딩)는 셸과 무관하게 동작합니다.
 
-### Step 3. sshd 설정 확인 (gpu-new에서)
+### Step 3. sshd `Match User` 블록으로 jump 정책 일괄 적용 (gpu-new에서)
+
+전역 sshd 설정 사전 확인:
 
 ```bash
 sudo sshd -T | grep -E '^(allowtcpforwarding|allowusers)'
 ```
 
-- `allowtcpforwarding yes` 확인. `no`면 `/etc/ssh/sshd_config`에서 활성화 후 reload.
+- `allowtcpforwarding yes` 확인. `no`면 `/etc/ssh/sshd_config`에서 활성화 필요.
 - `AllowUsers` 항목이 있다면 `jump`를 추가해야 합니다.
 
-**(선택) jump 계정 전용 정책 추가:**
-
-`/etc/ssh/sshd_config.d/jump.conf`:
+**jump 계정 전용 정책 파일 생성** — `/etc/ssh/sshd_config.d/jump.conf`:
 
 ```
 Match User jump
+    ForceCommand /usr/sbin/nologin
     AllowTcpForwarding yes
     PermitTTY no
     X11Forwarding no
@@ -161,7 +162,13 @@ Match User jump
 sudo systemctl reload ssh
 ```
 
-> `restrict`를 `authorized_keys`에 쓰면 위 효과 대부분이 이미 적용되므로, POC 단계에서는 Match 블록을 생략해도 됩니다. **둘 중 하나**만 있으면 충분.
+각 항목 의미:
+- `ForceCommand /usr/sbin/nologin` — **세션 채널**(셸/명령 실행) 시 무조건 `nologin`만 실행. 셸 차단의 결정적 한 줄. ProxyJump이 쓰는 **direct-tcpip 채널은 영향 없음** (채널 종류가 다름).
+- `AllowTcpForwarding yes` — ProxyJump 동작에 필요 (전역이 `no`면 여기서 명시적으로 켬)
+- `PermitTTY no` — PTY 할당 차단 (`ForceCommand`와 이중 안전장치)
+- `X11Forwarding no` / `AllowAgentForwarding no` / `PermitTunnel no` / `GatewayPorts no` — 각종 부가 통로 차단
+
+> 이 블록 한 곳에 jump 계정 정책을 모두 모아두면, 학생 키를 N개 추가해도 `authorized_keys` 라인은 **목적지(`permitopen`)만** 적으면 됩니다. 정책이 키마다 반복되지 않아 운영이 깔끔.
 
 ### Step 4. 키 발급 및 등록
 
@@ -184,11 +191,16 @@ sudo /opt/mlops/teamctl-xfs.sh add-key team05 --key "ssh-ed25519 AAAA... bastion
 
 ```bash
 PORT=22025   # team05의 SSH 포트
-echo "restrict,permitopen=\"127.0.0.1:${PORT}\" ssh-ed25519 AAAA... bastion-poc/jangmin" \
+echo "permitopen=\"127.0.0.1:${PORT}\" ssh-ed25519 AAAA... bastion-poc/jangmin" \
   | sudo tee -a /home/jump/.ssh/authorized_keys
 ```
 
-> 서버별 bastion이라 **항상 `127.0.0.1`**. 다른 서버 IP를 알 필요도, 등장시킬 필요도 없음. 이 단순함이 본 안의 강점.
+키 단위에 적는 것은 **`permitopen` 하나뿐**입니다:
+- `permitopen="127.0.0.1:22025"` — 이 키로는 **오직 자기 팀 포트**로만 터널 가능 (키마다 달라야 하는 유일한 항목)
+
+셸 차단·PTY 차단·X11/Agent/Tunnel 차단 등은 **§3의 `Match User jump` 블록이 sshd 레벨에서 일괄 적용**합니다. 키 단위 옵션을 최소로 유지해 학생 N명 확장 시에도 라인이 단순.
+
+> 서버별 bastion이라 `permitopen` 호스트가 **항상 `127.0.0.1`**. 다른 서버 IP를 알 필요도, 등장시킬 필요도 없음. 이 단순함이 본 안의 강점.
 
 ### Step 5. 학생 측 SSH config
 
@@ -233,8 +245,18 @@ ssh team05
 
 ```bash
 ssh bastion-gpu-new
-# 기대: "This account is currently not available." 또는 즉시 종료
 ```
+
+기대 출력 (Ubuntu 기준):
+```
+PTY allocation request failed on channel 0           ← no-pty 작동
+Welcome to Ubuntu 24.04 ... (긴 MOTD 출력)            ← sshd가 셸 실행 전 표준 배너
+...
+This account is currently not available.            ← nologin 셸 = 셸 차단 ✓
+Connection to 210.125.91.95 closed.                  ← 즉시 종료
+```
+
+> ⚠️ Ubuntu MOTD가 길어서 "원격 셸로 들어온 것"처럼 보이지만, **결정적 메시지는 마지막 두 줄**입니다. `whoami` 등을 쳤을 때 결과가 본인 노트북 로컬 사용자라면 이미 ssh가 끊겨 로컬 셸로 복귀한 상태. (선택) `sudo touch /home/jump/.hushlogin` 으로 MOTD를 끄면 출력이 더 명확해집니다.
 
 **7-2. 허용되지 않은 다른 팀 포트로 ProxyJump 시도**
 
@@ -282,9 +304,11 @@ sudo lsof -iTCP -sTCP:ESTABLISHED -u jump
 sudo /opt/mlops/teamctl-xfs.sh add-key team23 --key "ssh-ed25519 AAAA... bastion-poc/jangmin"
 
 PORT=22043
-echo "restrict,permitopen=\"127.0.0.1:${PORT}\" ssh-ed25519 AAAA... bastion-poc/jangmin" \
+echo "permitopen=\"127.0.0.1:${PORT}\" ssh-ed25519 AAAA... bastion-poc/jangmin" \
   | sudo tee -a /home/jump/.ssh/authorized_keys
 ```
+
+(gpu-old2 쪽도 §3과 동일한 `Match User jump` 블록을 `/etc/ssh/sshd_config.d/jump.conf`에 두는 것을 잊지 말 것.)
 
 **학생 측 `~/.ssh/config` 추가:**
 
