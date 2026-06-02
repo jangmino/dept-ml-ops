@@ -165,18 +165,50 @@ sudo /opt/mlops/teamctl-xfs.sh set-gpu-mode 4
 
 ---
 
-## 7. NFS 스토리지 연결
+## 7. Bastion 초기 설정 (SSH 게이트웨이)
+
+외부 SSH 접근을 22번 단일 포트로 모으는 bastion 구조를 활성화합니다. 본 서버에 1회만 실행하면 됩니다.
+
+```bash
+sudo /opt/mlops/teamctl-xfs.sh bastion-init
+```
+
+수행 내용:
+- `jump` 시스템 계정 (셸: `/usr/sbin/nologin`)
+- `/home/jump/.ssh/authorized_keys` 준비 (권한 600)
+- `/etc/ssh/sshd_config.d/jump.conf` 작성 (`Match User jump`: `ForceCommand=/usr/sbin/nologin`, `AllowTcpForwarding=yes`, `PermitTTY=no`, X11/Agent/Tunnel 차단)
+- `systemctl reload ssh`
+
+이후 `add-key`/`remove` 명령이 자동으로 bastion authorized_keys를 동기화합니다. 자세한 운영·트러블슈팅은 [README-admin.md §14 Bastion 운영](README-admin.md) 참고.
+
+### 외부 방화벽 규칙 (요약)
+
+| 포트 | 허용 | 비고 |
+|------|-----|------|
+| `22/tcp` | ✅ | bastion 진입 |
+| `22021~22069/tcp` | ❌ | 컨테이너 SSH (외부 차단) |
+| `80/tcp` | ✅ (gpu-new만) | Grafana |
+
+```bash
+sudo ufw allow 22/tcp
+sudo ufw deny  22021:22069/tcp
+# (gpu-new 한정) sudo ufw allow 80/tcp
+```
+
+---
+
+## 8. NFS 스토리지 연결
 
 > **전제:** 스토리지 서버([README-initialize-storage.md](README-initialize-storage.md))가 이미 세팅되어 NFS export가 동작 중이어야 합니다.
 
-### 7.1 NFS 클라이언트 설치
+### 8.1 NFS 클라이언트 설치
 
 ```bash
 sudo apt update
 sudo apt install -y nfs-common
 ```
 
-### 7.2 마운트 포인트 생성 + 마운트
+### 8.2 마운트 포인트 생성 + 마운트
 
 ```bash
 sudo mkdir -p /mnt/nfs/teams
@@ -184,7 +216,7 @@ sudo mount -t nfs4 210.125.91.94:/teams /mnt/nfs/teams
 df -h /mnt/nfs/teams
 ```
 
-### 7.3 fstab 영구 마운트
+### 8.3 fstab 영구 마운트
 
 부팅 순서에 따라 네트워크가 준비되기 전에 NFS 마운트를 시도하는 문제를 방지하기 위해 아래를 먼저 설정합니다:
 
@@ -208,7 +240,7 @@ sudo systemctl daemon-reload
 sudo mount -a
 ```
 
-### 7.4 스토리지 서버 원격 제어용 SSH 키 생성
+### 8.4 스토리지 서버 원격 제어용 SSH 키 생성
 
 teamctl-xfs.sh가 스토리지 서버의 nfsctl.sh를 SSH로 호출하기 위한 키입니다.
 
@@ -236,7 +268,7 @@ sudo chmod 644 /opt/mlops/keys/nfsctl_ed25519.pub
 sudo cat /opt/mlops/keys/nfsctl_ed25519.pub
 ```
 
-### 7.5 원격 연결 테스트
+### 8.5 원격 연결 테스트
 
 ```bash
 ssh -i /opt/mlops/keys/nfsctl_ed25519 \
@@ -247,9 +279,9 @@ ssh -i /opt/mlops/keys/nfsctl_ed25519 \
 
 ---
 
-## 8. 팀 생성 및 컨테이너 기동
+## 9. 팀 생성 및 컨테이너 기동
 
-### 8.1 팀 생성 (로컬 + NFS 통합)
+### 9.1 팀 생성 (로컬 + NFS 통합)
 
 ```bash
 sudo /opt/mlops/teamctl-xfs.sh create team01 \
@@ -259,14 +291,14 @@ sudo /opt/mlops/teamctl-xfs.sh create team01 \
   --nfs --nfs-size 2000G --nfs-soft 1950G
 ```
 
-### 8.2 컨테이너 기동
+### 9.2 컨테이너 기동
 
 ```bash
 sudo docker compose -f /opt/mlops/compose.yaml up -d team01
 sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 ```
 
-### 8.3 검증
+### 9.3 검증
 
 ```bash
 sudo xfs_quota -x -c "report -p -n" /data | head -n 20
@@ -276,9 +308,9 @@ sudo /opt/mlops/teamctl-xfs.sh audit
 
 ---
 
-## 9. 모니터링 대시보드 설정
+## 10. 모니터링 대시보드 설정
 
-### 9.1 소스 배포 및 기동
+### 10.1 소스 배포 및 기동
 
 ```bash
 sudo cp -r ~/work/dept-ml-ops/monitoring/ /opt/
@@ -291,7 +323,7 @@ sudo docker compose ps
 > Prometheus(9090), AlertManager(9093)는 localhost 바인딩이므로 SSH 터널로 접근합니다.
 > Node Exporter, cAdvisor, DCGM Exporter는 호스트 포트 없이 Docker 내부 네트워크로만 통신합니다.
 
-### 9.2 Grafana 설정
+### 10.2 Grafana 설정
 
 접속: `http://<서버IP>/` (nginx 프록시, 포트 80)
 
@@ -307,7 +339,7 @@ sudo docker compose ps
 | Docker (cAdvisor) | `13946` | 소스: Prometheus 선택 |
 | NVIDIA DCGM Exporter | `12239` | 소스: Prometheus 선택 |
 
-### 9.3 Prometheus 접속 (관리자)
+### 10.3 Prometheus 접속 (관리자)
 
 외부에서 직접 접근 불가. SSH 터널을 사용합니다.
 
@@ -316,7 +348,7 @@ sudo docker compose ps
 ssh -L 9090:127.0.0.1:9090 <user>@<서버IP>
 ```
 
-### 9.4 scrape 타겟 확인
+### 10.4 scrape 타겟 확인
 
 Prometheus 접속 후 **Status → Targets** 에서 모든 타겟(prometheus, node, cadvisor, dcgm)이 **UP** 상태인지 확인합니다.
 
@@ -333,6 +365,7 @@ Prometheus 접속 후 **Status → Targets** 에서 모든 타겟(prometheus, no
 - [ ] Docker 이미지 빌드
 - [ ] GPU 모드 설정 (`set-gpu-mode`)
 - [ ] NFS 클라이언트 설치 + `/mnt/nfs/teams` 마운트 + fstab 등록
+- [ ] Bastion 초기 설정 (`bastion-init`) + 방화벽 규칙 (22 허용, 22021~22069 차단)
 - [ ] 스토리지 서버 원격 제어용 SSH 키 생성 + 등록 + 연결 테스트
 - [ ] 팀 생성 (`--nfs` 포함) + 컨테이너 기동 + audit 검증
 - [ ] 모니터링 스택 기동 + nginx 프록시 동작 확인

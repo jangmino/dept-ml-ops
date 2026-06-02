@@ -178,7 +178,7 @@ sudo docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi
 
 ---
 
-## 2. teamctl-xfs.sh 배포
+## 4. teamctl-xfs.sh 배포
 
 ```bash
 cd ~/work && git clone https://github.com/jangmino/dept-ml-ops
@@ -195,7 +195,7 @@ echo "services:" | sudo tee /opt/mlops/compose.yaml
 
 ---
 
-## 3. GPU 모드 설정
+## 5. GPU 모드 설정
 
 ```bash
 sudo /opt/mlops/teamctl-xfs.sh set-gpu-mode 8
@@ -203,7 +203,7 @@ sudo /opt/mlops/teamctl-xfs.sh set-gpu-mode 8
 
 ---
 
-## 4. Docker 이미지 준비
+## 6. Docker 이미지 준비
 
 ```bash
 # Docker Hub에서 pull (빌드 완료된 이미지)
@@ -216,16 +216,48 @@ sudo docker build -t jangminnature/mlops:dept-20260208 .
 
 ---
 
-## 5. NFS 스토리지 연결
+## 7. Bastion 초기 설정 (SSH 게이트웨이)
 
-### 5.1 NFS 클라이언트 설치
+외부 SSH 접근을 22번 단일 포트로 모으는 bastion 구조를 활성화합니다. 본 서버에 1회만 실행하면 됩니다.
+
+```bash
+sudo /opt/mlops/teamctl-xfs.sh bastion-init
+```
+
+수행 내용:
+- `jump` 시스템 계정 (셸: `/usr/sbin/nologin`)
+- `/home/jump/.ssh/authorized_keys` 준비 (권한 600)
+- `/etc/ssh/sshd_config.d/jump.conf` 작성 (`Match User jump`: `ForceCommand=/usr/sbin/nologin`, `AllowTcpForwarding=yes`, `PermitTTY=no`, X11/Agent/Tunnel 차단)
+- `systemctl reload ssh`
+
+이후 `add-key`/`remove` 명령이 자동으로 bastion authorized_keys를 동기화합니다. 자세한 운영·트러블슈팅은 [README-admin.md §14 Bastion 운영](README-admin.md) 참고.
+
+### 외부 방화벽 규칙
+
+| 포트 | 허용 | 비고 |
+|------|-----|------|
+| `22/tcp` | ✅ | bastion 진입 |
+| `22031~22069/tcp` (구서버 범위) | ❌ | 컨테이너 SSH (외부 차단) |
+
+```bash
+sudo ufw allow 22/tcp
+sudo ufw deny  22031:22069/tcp
+```
+
+(구서버는 모니터링 80번 노출 불필요 — Grafana는 gpu-new에만)
+
+---
+
+## 8. NFS 스토리지 연결
+
+### 8.1 NFS 클라이언트 설치
 
 ```bash
 sudo apt update
 sudo apt install -y nfs-common
 ```
 
-### 5.2 마운트 포인트 생성 + 마운트
+### 8.2 마운트 포인트 생성 + 마운트
 
 ```bash
 sudo mkdir -p /mnt/nfs/teams
@@ -233,7 +265,7 @@ sudo mount -t nfs4 210.125.91.94:/teams /mnt/nfs/teams
 df -h /mnt/nfs/teams
 ```
 
-### 5.3 fstab 영구 마운트
+### 8.3 fstab 영구 마운트
 
 부팅 시 네트워크 대기 설정:
 
@@ -255,7 +287,7 @@ sudo systemctl daemon-reload
 sudo mount -a
 ```
 
-### 5.4 NFS 원격 제어용 SSH 키 설정
+### 8.4 NFS 원격 제어용 SSH 키 설정
 
 **옵션 A — 신규 서버와 같은 키 공유 (간단):**
 
@@ -279,7 +311,7 @@ sudo cat /opt/mlops/keys/nfsctl_ed25519.pub
 # → 스토리지 서버의 /home/nfsadmin/.ssh/authorized_keys에 추가
 ```
 
-### 5.5 연결 테스트
+### 8.5 연결 테스트
 
 ```bash
 ssh -i /opt/mlops/keys/nfsctl_ed25519 \
@@ -290,24 +322,24 @@ ssh -i /opt/mlops/keys/nfsctl_ed25519 \
 
 ---
 
-## 6. 모니터링 exporter 배포
+## 9. 모니터링 exporter 배포
 
 중앙 Prometheus(gpu-new)가 이 서버의 메트릭을 원격 scrape 합니다.
 
-### 6.1 exporter 스택 배포
+### 9.1 exporter 스택 배포
 
 ```bash
 sudo mkdir -p /opt/monitoring
 sudo cp ~/work/dept-ml-ops/monitoring/exporters/docker-compose.yaml /opt/monitoring/
 ```
 
-### 6.2 .env 파일 생성
+### 9.2 .env 파일 생성
 
 ```bash
 echo "SERVER_IP=<이 서버의 IP>" | sudo tee /opt/monitoring/.env
 ```
 
-### 6.3 exporter 기동
+### 9.3 exporter 기동
 
 ```bash
 cd /opt/monitoring
@@ -315,7 +347,7 @@ sudo docker compose up -d
 sudo docker compose ps
 ```
 
-### 6.4 방화벽 설정 — Prometheus 서버만 접근 허용
+### 9.4 방화벽 설정 — Prometheus 서버만 접근 허용
 
 ```bash
 sudo ufw allow from 210.125.91.95 to any port 9100
@@ -323,7 +355,7 @@ sudo ufw allow from 210.125.91.95 to any port 8080
 sudo ufw allow from 210.125.91.95 to any port 9400
 ```
 
-### 6.5 중앙 Prometheus에 등록
+### 9.5 중앙 Prometheus에 등록
 
 gpu-new 서버에서 `prometheus.yml`의 해당 서버 주석을 해제하고 IP를 입력한 뒤:
 
@@ -334,9 +366,9 @@ sudo docker compose restart prometheus
 
 ---
 
-## 7. 팀 생성 및 컨테이너 기동
+## 10. 팀 생성 및 컨테이너 기동
 
-### 7.1 팀 생성 (예: gpu-old1의 team11)
+### 10.1 팀 생성 (예: gpu-old1의 team11)
 
 ```bash
 sudo /opt/mlops/teamctl-xfs.sh create team11 \
@@ -346,13 +378,13 @@ sudo /opt/mlops/teamctl-xfs.sh create team11 \
   --nfs --nfs-size 2000G --nfs-soft 1950G
 ```
 
-### 7.2 컨테이너 기동
+### 10.2 컨테이너 기동
 
 ```bash
 sudo docker compose -f /opt/mlops/compose.yaml up -d team11
 ```
 
-### 7.3 검증
+### 10.3 검증
 
 ```bash
 sudo /opt/mlops/teamctl-xfs.sh audit
@@ -376,6 +408,7 @@ sudo xfs_quota -x -c "report -p -n" /data
 - [ ] compose.yaml 스켈레톤 생성
 - [ ] GPU 모드 8 설정
 - [ ] Docker 이미지 pull (또는 빌드)
+- [ ] Bastion 초기 설정 (`bastion-init`) + 방화벽 규칙 (22 허용, 22031~22069 차단)
 - [ ] NFS 클라이언트 설치 + `/mnt/nfs/teams` 마운트 + fstab 등록
 - [ ] NFS 원격 제어용 SSH 키 설정 + 연결 테스트
 - [ ] 모니터링 exporter 배포 + 방화벽 설정

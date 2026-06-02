@@ -71,23 +71,62 @@ type $env:USERPROFILE\.ssh\id_ed25519_team01_jangmin.pub
 
 ## 3. VS Code Remote-SSH 접속 설정
 
+### Bastion(2단 접속) 개념 — 왜 두 개의 Host 블록인가
+
+학교 방화벽 정책상 외부에서는 서버의 **SSH 표준 포트(22번) 하나**만 접근 가능합니다. 컨테이너 포트(22021 등)에 직접 접속할 수 없으므로, 2단계로 들어갑니다:
+
+```
+본인 노트북 ──(외부망)──> <GPU서버>:22 (bastion = jump 계정)
+                              │
+                              └─(서버 내부)──> 본인 팀 컨테이너:<팀포트>
+```
+
+- **Bastion**: 각 GPU 서버의 SSH 22번. `jump` 공용 계정으로만 받고, 셸 차단 + 본인 팀 포트 외엔 거부.
+- **컨테이너**: 본인 팀 포트 (위 표의 PORT). bastion 입장에서는 `127.0.0.1:<팀포트>`로 보임.
+
+SSH의 **`ProxyJump`** 기능이 이 두 단계를 한 줄 명령으로 자동 처리합니다. 한 번 설정해두면 `ssh ss-team01`만 치면 끝.
+
 ### SSH config 작성
 
 SSH config 파일 위치:
 - Mac/Linux: `~/.ssh/config`
 - Windows: `C:\Users\<사용자>\.ssh\config`
 
-**위 접속 정보 표를 참고하여** 아래를 추가합니다. (예: team01, PORT=22021)
+**본인 팀에 맞춰** 두 블록을 추가합니다. 예시는 team01(gpu-new, PORT=22021):
 
 ```
-Host ss-team01
-  HostName <서버IP>
-  User team01
-  Port 22021
+# 1) Bastion — 본인 팀 서버에 하나
+Host bastion-gpu-new
+  HostName 210.125.91.95
+  Port 22
+  User jump
   IdentityFile ~/.ssh/id_ed25519_team01_jangmin
   IdentitiesOnly yes
+
+# 2) 팀 컨테이너 — bastion을 ProxyJump으로 경유
+Host ss-team01
+  HostName 127.0.0.1
+  Port 22021
+  User team01
+  IdentityFile ~/.ssh/id_ed25519_team01_jangmin
+  IdentitiesOnly yes
+  ProxyJump bastion-gpu-new
   ServerAliveInterval 30
 ```
+
+> **포인트**: `ss-team01` 블록의 `HostName 127.0.0.1`은 본인 노트북이 아니라 **bastion이 본 자기 localhost** 라는 의미입니다. bastion이 받은 요청을 같은 호스트의 22021 포트로 터널링합니다.
+>
+> **본인이 다른 서버 팀이면** (예: team23 → gpu-old2 → 22043): `bastion-gpu-old2` 블록을 추가하고, 컨테이너 블록의 `ProxyJump`를 그것으로 바꾸세요. 본인 팀이 속한 서버의 bastion만 추가하면 됩니다 (모든 서버를 다 적을 필요 없음).
+
+### 서버별 bastion HostName 참고표
+
+| 서버 | Bastion HostName |
+|------|------------------|
+| gpu-new | `210.125.91.95` |
+| gpu-old1 | `<관리자 안내>` |
+| gpu-old2 | `<관리자 안내>` |
+| gpu-old3 | `<관리자 안내>` |
+| gpu-old4 | `<관리자 안내>` |
 
 ### 접속 방법
 
@@ -100,6 +139,8 @@ Host ss-team01
 ```bash
 ssh ss-team01
 ```
+
+> 첫 접속 시 호스트 키 확인을 **두 번** 묻습니다 (bastion + 컨테이너). 각각 `yes`로 응답하세요.
 
 ---
 
@@ -214,13 +255,21 @@ df -h /nfs/team
 
 ### (A) `REMOTE HOST IDENTIFICATION HAS CHANGED` 경고
 
-컨테이너 교체로 SSH host key가 바뀐 경우입니다. 아래 실행 후 재접속:
+호스트키가 바뀐 경우입니다. 어느 단(bastion인지 컨테이너인지)에서 났는지 메시지를 잘 보세요.
 
+**컨테이너 쪽 (대부분의 경우, 컨테이너 교체 후):**
 ```bash
-ssh-keygen -R "[<서버IP>]:<PORT>"
-# 예:
-ssh-keygen -R "[210.125.91.95]:22021"
+ssh-keygen -R "[127.0.0.1]:22021"
+# 본인 팀 포트로 치환
 ```
+
+**Bastion 쪽 (서버 재설치 후 등 드문 경우):**
+```bash
+ssh-keygen -R "[210.125.91.95]:22"
+# 본인 팀 서버 IP로 치환
+```
+
+이후 재접속하면 호스트키 확인을 다시 묻습니다.
 
 ### (B) 접속이 안 될 때
 

@@ -41,6 +41,13 @@ NFS_SSH_PORT_DEFAULT="22"
 NFS_SSH_KEY_DEFAULT="/opt/mlops/keys/nfsctl_ed25519"
 NFSCTL_REMOTE_PATH_DEFAULT="/opt/nfs/nfsctl.sh"
 
+# ---- Bastion (SSH gateway: jump user) ----
+JUMP_USER="jump"
+JUMP_HOME="/home/jump"
+JUMP_SSH_DIR="${JUMP_HOME}/.ssh"
+JUMP_AUTHKEYS="${JUMP_SSH_DIR}/authorized_keys"
+JUMP_SSHD_CONF="/etc/ssh/sshd_config.d/jump.conf"
+
 PROJECTS_FILE="/etc/projects"
 PROJID_FILE="/etc/projid"
 
@@ -262,7 +269,7 @@ fix_team_ssh_perms(){
 }
 
 add_key(){
-  local team="$1" key="$2" gid="$3"
+  local team="$1" key="$2" gid="$3" port="${4:-}"
   ensure_team_ssh_dir "${team}" "${gid}"
 
   local f="${SSH_DIR}/${team}/authorized_keys"
@@ -275,6 +282,13 @@ add_key(){
   fi
 
   fix_team_ssh_perms "${team}" "${gid}"
+
+  # bastion authorized_keys에도 등록 (port가 주어진 경우)
+  if [[ -n "${port}" ]] && id -u "${JUMP_USER}" >/dev/null 2>&1; then
+    add_bastion_key "${team}" "${port}" "${key}"
+  elif [[ -n "${port}" ]]; then
+    log "WARN: bastion user '${JUMP_USER}' not set up; skipping bastion key registration. Run: $0 bastion-init"
+  fi
 }
 
 backup_keys(){
@@ -288,6 +302,145 @@ backup_keys(){
   cp -a "${src}" "${dest}"
   chmod 600 "${dest}" 2>/dev/null || true
   log "Backed up: ${src} -> ${dest}"
+}
+
+# -------------------------
+# Bastion (SSH jump host) management
+# - 자기 서버용 bastion: jump 계정으로 외부 SSH 받아 같은 호스트의 팀 컨테이너로 ProxyJump
+# - 정책: ForceCommand=nologin + AllowTcpForwarding=yes (Match User 블록에 일괄)
+# - 키 단위 화이트리스트: permitopen="127.0.0.1:<team_port>"
+# -------------------------
+ensure_bastion_setup(){
+  # idempotent: jump 계정 + .ssh 디렉터리 + sshd Match 블록 + sshd reload
+  if ! id -u "${JUMP_USER}" >/dev/null 2>&1; then
+    log "Creating bastion user '${JUMP_USER}' (shell=/usr/sbin/nologin)..."
+    useradd -m -s /usr/sbin/nologin "${JUMP_USER}"
+  fi
+
+  # 셸이 nologin이 아니면 강제로 교정 (ForceCommand가 이중 안전장치지만 계정 셸도 nologin으로 통일)
+  local cur_shell
+  cur_shell="$(getent passwd "${JUMP_USER}" | awk -F: '{print $7}')"
+  if [[ "${cur_shell}" != "/usr/sbin/nologin" ]]; then
+    log "Fixing ${JUMP_USER} shell: ${cur_shell} -> /usr/sbin/nologin"
+    usermod -s /usr/sbin/nologin "${JUMP_USER}"
+  fi
+
+  mkdir -p "${JUMP_SSH_DIR}"
+  chown "${JUMP_USER}:${JUMP_USER}" "${JUMP_SSH_DIR}"
+  chmod 700 "${JUMP_SSH_DIR}"
+  [[ -f "${JUMP_AUTHKEYS}" ]] || touch "${JUMP_AUTHKEYS}"
+  chown "${JUMP_USER}:${JUMP_USER}" "${JUMP_AUTHKEYS}"
+  chmod 600 "${JUMP_AUTHKEYS}"
+
+  # sshd Match block — 멱등하게 항상 재기록 (관리자가 손댄 흔적이 있으면 백업 후 덮어씀)
+  if [[ -f "${JUMP_SSHD_CONF}" ]] && ! cmp -s "${JUMP_SSHD_CONF}" <(_bastion_sshd_conf_content); then
+    local bak="${JUMP_SSHD_CONF}.bak.$(date +%Y%m%d_%H%M%S)"
+    cp -a "${JUMP_SSHD_CONF}" "${bak}"
+    log "Existing ${JUMP_SSHD_CONF} backed up to ${bak}"
+  fi
+  _bastion_sshd_conf_content > "${JUMP_SSHD_CONF}"
+  chmod 644 "${JUMP_SSHD_CONF}"
+
+  # reload sshd
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || \
+      log "WARN: failed to reload sshd; please reload manually."
+  fi
+
+  log "Bastion ready: ${JUMP_USER}@$(hostname) | sshd Match block applied (${JUMP_SSHD_CONF})."
+}
+
+_bastion_sshd_conf_content(){
+  cat <<EOF
+# Managed by teamctl-xfs.sh — bastion (SSH jump) policy for ${JUMP_USER}
+Match User ${JUMP_USER}
+    ForceCommand /usr/sbin/nologin
+    AllowTcpForwarding yes
+    PermitTTY no
+    X11Forwarding no
+    AllowAgentForwarding no
+    PermitTunnel no
+    GatewayPorts no
+EOF
+}
+
+# Build a single authorized_keys line for bastion, prepending permitopen="..."
+# Handles both raw key lines and lines that already have options.
+_bastion_line_for(){
+  local port="$1" key_line="$2"
+  if [[ "${key_line}" =~ ^(ssh-|ecdsa-|sk-) ]]; then
+    echo "permitopen=\"127.0.0.1:${port}\" ${key_line}"
+  else
+    # 기존 옵션이 앞에 있으면 콤마로 병합
+    local opts rest
+    opts="${key_line%% *}"
+    rest="${key_line#* }"
+    echo "permitopen=\"127.0.0.1:${port}\",${opts} ${rest}"
+  fi
+}
+
+add_bastion_key(){
+  local team="$1" port="$2" key="$3"
+  id -u "${JUMP_USER}" >/dev/null 2>&1 || die "Bastion user '${JUMP_USER}' missing. Run: $0 bastion-init"
+  [[ -n "${port}" ]] || die "Bastion port required for ${team}."
+
+  [[ -f "${JUMP_AUTHKEYS}" ]] || { touch "${JUMP_AUTHKEYS}"; chown "${JUMP_USER}:${JUMP_USER}" "${JUMP_AUTHKEYS}"; chmod 600 "${JUMP_AUTHKEYS}"; }
+
+  local line
+  line="$(_bastion_line_for "${port}" "${key}")"
+
+  # 같은 키 본문이 이미 같은 port permitopen으로 등록되어 있으면 skip
+  if grep -F "permitopen=\"127.0.0.1:${port}\"" "${JUMP_AUTHKEYS}" 2>/dev/null | grep -qF "${key}"; then
+    log "Bastion key already present for ${team} (port ${port})."
+  else
+    echo "${line}" >> "${JUMP_AUTHKEYS}"
+    log "Bastion key added for ${team} (permitopen=127.0.0.1:${port})."
+  fi
+  chown "${JUMP_USER}:${JUMP_USER}" "${JUMP_AUTHKEYS}" 2>/dev/null || true
+  chmod 600 "${JUMP_AUTHKEYS}" 2>/dev/null || true
+}
+
+remove_bastion_keys_for_team(){
+  # team의 port에 해당하는 permitopen 라인을 모두 제거
+  local team="$1" port="$2"
+  [[ -f "${JUMP_AUTHKEYS}" ]] || return 0
+  [[ -n "${port}" ]] || { log "WARN: no port for ${team}; bastion lines not cleaned."; return 0; }
+  local pattern="permitopen=\"127.0.0.1:${port}\""
+  if grep -qF "${pattern}" "${JUMP_AUTHKEYS}" 2>/dev/null; then
+    grep -vF "${pattern}" "${JUMP_AUTHKEYS}" > "${JUMP_AUTHKEYS}.tmp" || true
+    mv "${JUMP_AUTHKEYS}.tmp" "${JUMP_AUTHKEYS}"
+    chown "${JUMP_USER}:${JUMP_USER}" "${JUMP_AUTHKEYS}" 2>/dev/null || true
+    chmod 600 "${JUMP_AUTHKEYS}" 2>/dev/null || true
+    log "Bastion keys for ${team} (port ${port}) removed."
+  fi
+}
+
+sync_bastion_keys_all_teams(){
+  # 모든 팀의 authorized_keys를 읽어 bastion authorized_keys를 재구축 (마이그레이션용)
+  ensure_bastion_setup
+  local tmp="${JUMP_AUTHKEYS}.new"
+  : > "${tmp}"
+  chown "${JUMP_USER}:${JUMP_USER}" "${tmp}"
+  chmod 600 "${tmp}"
+
+  local count=0 team team_keys_file uid gid port gpu
+  while read -r team; do
+    [[ -n "${team}" ]] || continue
+    team_keys_file="${SSH_DIR}/${team}/authorized_keys"
+    [[ -f "${team_keys_file}" ]] || continue
+    read -r uid gid port gpu <<< "$(get_team_env_from_compose "${team}")"
+    [[ -n "${port}" ]] || { log "Skip ${team}: no port in compose"; continue; }
+    while IFS= read -r key_line; do
+      [[ -n "${key_line}" && ! "${key_line}" =~ ^# ]] || continue
+      _bastion_line_for "${port}" "${key_line}" >> "${tmp}"
+      count=$((count + 1))
+    done < "${team_keys_file}"
+  done < <(list_teams_from_compose)
+
+  mv "${tmp}" "${JUMP_AUTHKEYS}"
+  chown "${JUMP_USER}:${JUMP_USER}" "${JUMP_AUTHKEYS}"
+  chmod 600 "${JUMP_AUTHKEYS}"
+  log "Bastion synced: ${count} key line(s) registered from all teams."
 }
 
 # -------------------------
@@ -508,11 +661,22 @@ Core:
     [--nfs-host HOST] [--nfs-user USER] [--nfs-port 22] [--nfs-key /path/to/key] [--nfsctl /opt/nfs/nfsctl.sh]
   sudo $0 set-image TEAM image:tag
 
+Bastion (SSH gateway: jump user on this host):
+  sudo $0 bastion-init                  # 한번 실행: jump 계정 + sshd Match 블록 셋업
+  sudo $0 bastion-sync                  # 마이그레이션: 모든 팀 키를 jump authorized_keys에 재등록
+  sudo $0 bastion-list                  # 현재 jump authorized_keys 내용 확인
+
 Storage model:
 - Local quota: ${DATA_ROOT} (XFS + prjquota). Team local dir: ${TEAMS_DIR}/<team>
   - Container: /workspace and /home/<team> share the same local dir (same local quota)
 - NFS (optional): storage server quota + host mount ${NFS_MOUNT_DEFAULT}/<team> -> container ${NFS_CONTAINER_PATH_DEFAULT}
   - NFS quota is independent from local quota.
+
+Bastion model:
+- External SSH access: only ${JUMP_USER}@<this-host>:22 is exposed externally.
+- Students use ProxyJump to reach their team container via 127.0.0.1:<team_port> (bastion-side).
+- Per-key 'permitopen' restricts each student key to their own team port only.
+- 'add-key' and 'remove' auto-sync to ${JUMP_AUTHKEYS}.
 
 EOF
 }
@@ -703,8 +867,9 @@ cmd_add_key(){
 
   read -r uid gid port gpu <<< "$(get_team_env_from_compose "${team}")"
   [[ -n "${gid}" ]] || die "Could not determine GID from compose for ${team}"
+  [[ -n "${port}" ]] || die "Could not determine port from compose for ${team}"
 
-  add_key "${team}" "${key}" "${gid}"
+  add_key "${team}" "${key}" "${gid}" "${port}"
   log "Done."
 }
 
@@ -947,6 +1112,13 @@ cmd_remove(){
   compose_remove_team "${team}"
   log "Removed ${team} from compose."
 
+  # Always clean bastion authorized_keys entries for this team
+  if [[ -n "${port:-}" ]]; then
+    remove_bastion_keys_for_team "${team}" "${port}" || true
+  else
+    log "WARN: no port detected for ${team}; bastion lines may need manual cleanup."
+  fi
+
   # Optionally purge local data
   if [[ "${purge}" == "true" ]]; then
     # backup authorized_keys
@@ -995,6 +1167,26 @@ cmd_remove(){
   else
     log "NFS preserved (use --purge-nfs to remove NFS quota/mapping; add --purge-nfs-dir to delete NFS dir)."
   fi
+}
+
+cmd_bastion_init(){
+  need_root
+  ensure_bastion_setup
+}
+
+cmd_bastion_sync(){
+  need_root
+  need_compose
+  sync_bastion_keys_all_teams
+}
+
+cmd_bastion_list(){
+  need_root
+  [[ -f "${JUMP_AUTHKEYS}" ]] || die "Bastion not set up. Run: $0 bastion-init"
+  echo "# Bastion: ${JUMP_USER}@$(hostname) | ${JUMP_AUTHKEYS}"
+  echo "# (한 줄당: permitopen=\"127.0.0.1:<port>\" <key-type> <key-data> <comment>)"
+  echo "---"
+  cat "${JUMP_AUTHKEYS}"
 }
 
 cmd_set_image() {
@@ -1073,6 +1265,9 @@ main(){
     reset) cmd_reset "$@";;
     remove) cmd_remove "$@";;
     set-image) cmd_set_image "${1:-}" "${2:-}" ;;
+    bastion-init) cmd_bastion_init "$@";;
+    bastion-sync) cmd_bastion_sync "$@";;
+    bastion-list) cmd_bastion_list "$@";;
     ""|-h|--help|help) usage;;
     *) die "Unknown command: ${cmd}. Use --help.";;
   esac

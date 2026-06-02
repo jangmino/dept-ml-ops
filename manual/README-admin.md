@@ -160,10 +160,17 @@ su -s /bin/bash -c "id; ls -al /nfs/team | head" team01
 sudo /opt/mlops/teamctl-xfs.sh add-key team01 --key "ssh-ed25519 AAAA... team01/jangmin"
 ```
 
+키가 **두 곳에 자동 등록**됩니다:
+- 컨테이너 authorized_keys: `/data/ssh/team01/authorized_keys`
+- Bastion authorized_keys: `/home/jump/.ssh/authorized_keys` (permitopen="127.0.0.1:22021" 자동 부여)
+
+Bastion 사전 설정이 필요한 신규 서버라면 먼저 `bastion-init` 한 번 실행 (자세한 내용은 §14 Bastion 운영 참고).
+
 ### 등록 확인
 
 ```bash
 sudo cat /data/ssh/team01/authorized_keys
+sudo /opt/mlops/teamctl-xfs.sh bastion-list | grep "127.0.0.1:22021"
 ```
 
 ### 권한 복구
@@ -409,11 +416,111 @@ sudo teamctl-xfs.sh nfs-resize TEAM --nfs-size S [--nfs-soft S]  # NFS만
 sudo teamctl-xfs.sh reset TEAM
 sudo teamctl-xfs.sh remove TEAM [--purge-data] [--purge-nfs] [--purge-nfs-dir]
 sudo teamctl-xfs.sh set-image TEAM image:tag
+
+# Bastion (SSH gateway)
+sudo teamctl-xfs.sh bastion-init                              # 신규 서버 1회 셋업
+sudo teamctl-xfs.sh bastion-sync                              # 마이그레이션: 모든 팀 키 재등록
+sudo teamctl-xfs.sh bastion-list                              # 현재 jump authorized_keys 확인
 ```
 
 ---
 
-## 14. FAQ
+## 14. Bastion 운영
+
+외부 SSH 접근을 **서버당 22번 단일 포트**로 모으는 구조. 각 GPU 서버에 `jump` 시스템 계정이 떠 있고, 학생은 거기를 ProxyJump으로 거쳐 자기 팀 컨테이너로 진입합니다. 원리·검증 과정은 [README-bastion-poc.md](README-bastion-poc.md) 참조.
+
+### 14.1 초기 설정 (서버당 1회)
+
+신규 GPU 서버 구축 직후 또는 기존 서버에 bastion을 처음 도입할 때 1회 실행:
+
+```bash
+sudo /opt/mlops/teamctl-xfs.sh bastion-init
+```
+
+수행 내용:
+- `jump` 시스템 계정 생성 (셸: `/usr/sbin/nologin`)
+- `/home/jump/.ssh/authorized_keys` 준비 (권한 600)
+- `/etc/ssh/sshd_config.d/jump.conf` 작성 (Match User: `ForceCommand=/usr/sbin/nologin`, `AllowTcpForwarding=yes`, `PermitTTY=no`, `X11Forwarding=no`, `AllowAgentForwarding=no`, `PermitTunnel=no`, `GatewayPorts=no`)
+- `systemctl reload ssh`
+
+멱등 — 여러 번 실행해도 안전. 기존 `jump.conf`에 수동 편집이 있으면 자동 백업 후 덮어씁니다.
+
+### 14.2 키 등록·삭제는 자동
+
+- `add-key TEAM --key "..."` 실행 시 **컨테이너 + bastion 양쪽**에 자동 등록 (bastion 쪽은 `permitopen="127.0.0.1:<해당팀포트>"`)
+- `remove TEAM` 실행 시 해당 팀의 bastion 라인도 **자동 제거** (compose에서 빠질 때 같이)
+
+별도 명령이 필요 없습니다.
+
+### 14.3 기존 서버 마이그레이션 (도입 시 1회)
+
+bastion 도입 이전부터 운영하던 서버는 팀별 authorized_keys만 있고 bastion에는 비어 있습니다. 한번에 모든 팀의 키를 bastion으로 동기화:
+
+```bash
+sudo /opt/mlops/teamctl-xfs.sh bastion-sync
+```
+
+각 팀의 `/data/ssh/<team>/authorized_keys`를 읽어 `/home/jump/.ssh/authorized_keys`를 통째로 재작성합니다. 멱등 — 다시 실행해도 안전.
+
+### 14.4 현재 상태 확인
+
+```bash
+sudo /opt/mlops/teamctl-xfs.sh bastion-list
+# 또는 직접:
+sudo cat /home/jump/.ssh/authorized_keys
+```
+
+각 라인 형식: `permitopen="127.0.0.1:<port>" ssh-ed25519 AAAA... <comment>`
+
+### 14.5 접속 로그 확인
+
+bastion 진입 시도가 모두 sshd 로그에 남습니다.
+
+```bash
+sudo journalctl -u ssh --since "1 hour ago" --no-pager | grep jump
+```
+
+확인 패턴:
+- `Accepted publickey for jump from <학생IP> ... ED25519 SHA256:<지문>` — 정상 진입 (지문으로 누구인지 식별)
+- `administratively prohibited` — `permitopen` 매칭 실패 (허용 안 된 포트로의 터널 시도)
+
+### 14.6 외부 노출 포트 정책 (방화벽)
+
+각 GPU 서버에서 외부망(또는 학교 방화벽 안)에 노출해야 할 것:
+
+| 포트 | 허용 여부 | 비고 |
+|------|---------|------|
+| `22` (TCP) | ✅ 허용 | bastion 진입 |
+| `22021~22069` (TCP) | ❌ 차단 | 컨테이너 SSH (외부 접근 금지) |
+| `80` (TCP, gpu-new만) | ✅ 허용 | Grafana 리버스 프록시 |
+
+UFW 예시 (해당 서버에서):
+
+```bash
+sudo ufw allow 22/tcp
+sudo ufw deny  22021:22069/tcp
+# (gpu-new 한정)
+sudo ufw allow 80/tcp
+```
+
+### 14.7 트러블슈팅
+
+**증상: 학생이 ProxyJump 접속 시 `channel 0: open failed: administratively prohibited`**
+- `bastion-list`에서 해당 학생 키가 등록되어 있는지 확인
+- 등록되어 있어도 `permitopen` 포트가 본인 팀 포트와 일치하는지 확인
+- sshd 전역에서 TCP 포워딩이 켜져 있는지: `sudo sshd -T -C user=jump | grep allowtcpforwarding`
+
+**증상: `bastion-init` 후에도 `ssh bastion-...` 시 셸 진입됨**
+- `/etc/ssh/sshd_config.d/jump.conf` 존재 확인
+- `sudo sshd -T -C user=jump | grep -i forcecommand` → `forcecommand /usr/sbin/nologin` 보여야 함
+- 안 보이면 `sudo systemctl reload ssh` 다시 실행
+
+**증상: 학생이 본인 팀이 아닌 다른 팀 포트로 터널 시도 → 거부됨**
+- 정상 동작. `permitopen`이 본인 팀 포트만 허용하도록 자동 잠금.
+
+---
+
+## 15. FAQ
 
 ### Q. `fix-perms TEAM` 은 무엇을 하나요?
 
@@ -488,7 +595,7 @@ sudo /opt/mlops/teamctl-xfs.sh remove team01 --purge-data --purge-nfs --purge-nf
 
 ---
 
-## 15. GPU 사용률 감사 및 회수
+## 16. GPU 사용률 감사 및 회수
 
 장기간 GPU를 거의 사용하지 않는 팀을 식별하여 리소스를 회수·재배정하기 위한 절차입니다. 감사는 Prometheus에 누적된 DCGM 메트릭을 기반으로 하며, 관리자가 `/opt/mlops/gpu-audit.sh`를 수동 실행하여 리포트를 받습니다.
 

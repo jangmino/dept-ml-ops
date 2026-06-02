@@ -3,7 +3,13 @@
 > 외부 노출 포트를 **서버당 1개 (총 5포트)** 로 줄이는 방식의 시범 검증 문서.
 > 각 GPU 서버에 자체 bastion(jump 시스템 계정)을 두는 **분산 구조**.
 >
-> **이 문서는 임시 검증용입니다.** 만족스러우면 본 매뉴얼(`README-admin.md`, `README-team.md`, `README-initialize-gpu.md` 등) 및 `teamctl-xfs.sh`를 일괄 수정합니다.
+> **✅ 정식 채택됨 (gpu-new에서 검증 완료).** 본 매뉴얼과 `teamctl-xfs.sh`에 반영되었습니다:
+> - 운영 절차: [README-admin.md §14 Bastion 운영](README-admin.md)
+> - 신규 서버 초기화: [README-initialize-gpu.md §7](README-initialize-gpu.md) · [README-initialize-gpu-old.md §7](README-initialize-gpu-old.md)
+> - 팀원 안내: [README-team.md §3 (ProxyJump)](README-team.md)
+> - 스크립트 명령: `teamctl-xfs.sh bastion-init`, `bastion-sync`, `bastion-list` (자세한 내용 위 매뉴얼)
+>
+> 본 문서는 **원리·검증 방법·IT 협상용 자료**로 유지합니다. 운영 절차는 위 매뉴얼을 참조하세요.
 
 ---
 
