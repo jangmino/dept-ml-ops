@@ -380,6 +380,12 @@ watch -n 2 nvidia-smi
 docker exec <container_name> nvidia-smi
 ```
 
+### OS/재설치 관련 (참고)
+
+- **`systemctl is-active ssh` 가 `inactive`인데 SSH는 됨** — Ubuntu 24.04는 SSH가 **소켓 활성화**입니다(정상). `systemctl is-active ssh.socket` / `ss -tlnp | grep ':22'`로 판단하세요.
+- **팀 생성 시 UID/포트가 팀번호와 안 맞음** — 구버전 `teamctl-xfs.sh`의 두 자리 팀 파싱 버그(수정됨). 최신 스크립트로 갱신하세요(`git pull` 후 `/opt/mlops/`에 재배포).
+- 서버 재설치·초기화 트러블슈팅(부팅매체·호스트키·비번복구 등)은 [README-initialize-gpu-old.md](README-initialize-gpu-old.md) "트러블슈팅" 절 참고.
+
 ---
 
 ## 12. 일상 운영 체크리스트
