@@ -95,7 +95,7 @@ team_num_from_name(){
   # Extract trailing digits; team01 -> 1
   local team="$1"
   local digits
-  digits="$(echo "${team}" | sed -n 's/.*\([0-9][0-9]*\)$/\1/p')"
+  digits="$(echo "${team}" | sed -n 's/^[^0-9]*\([0-9][0-9]*\)$/\1/p')"
   if [[ -n "${digits}" ]]; then
     echo "$((10#${digits}))"
   else
