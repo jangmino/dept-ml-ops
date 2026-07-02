@@ -13,19 +13,19 @@ scrape_configs:
       - targets: ["node_exporter:9100"]
         labels:
           server: "gpu-new"
-      # 구 서버 — IP 확정 후 주석 해제
-      # - targets: ["210.125.91.??:9100"]
-      #   labels:
-      #     server: "gpu-old1"
-      # - targets: ["210.125.91.??:9100"]
-      #   labels:
-      #     server: "gpu-old2"
-      # - targets: ["210.125.91.??:9100"]
-      #   labels:
-      #     server: "gpu-old3"
-      # - targets: ["210.125.91.??:9100"]
-      #   labels:
-      #     server: "gpu-old4"
+      # 구 서버 (gpu-old1~4)
+      - targets: ["210.125.91.90:9100"]
+        labels:
+          server: "gpu-old1"
+      - targets: ["210.125.91.91:9100"]
+        labels:
+          server: "gpu-old2"
+      - targets: ["210.125.91.92:9100"]
+        labels:
+          server: "gpu-old3"
+      - targets: ["210.125.91.93:9100"]
+        labels:
+          server: "gpu-old4"
 
   # ── cAdvisor (컨테이너 메트릭) ──
   - job_name: cadvisor
@@ -33,18 +33,19 @@ scrape_configs:
       - targets: ["cadvisor:8080"]
         labels:
           server: "gpu-new"
-      # - targets: ["210.125.91.??:8080"]
-      #   labels:
-      #     server: "gpu-old1"
-      # - targets: ["210.125.91.??:8080"]
-      #   labels:
-      #     server: "gpu-old2"
-      # - targets: ["210.125.91.??:8080"]
-      #   labels:
-      #     server: "gpu-old3"
-      # - targets: ["210.125.91.??:8080"]
-      #   labels:
-      #     server: "gpu-old4"
+      # 구 서버 (gpu-old1~4)
+      - targets: ["210.125.91.90:8080"]
+        labels:
+          server: "gpu-old1"
+      - targets: ["210.125.91.91:8080"]
+        labels:
+          server: "gpu-old2"
+      - targets: ["210.125.91.92:8080"]
+        labels:
+          server: "gpu-old3"
+      - targets: ["210.125.91.93:8080"]
+        labels:
+          server: "gpu-old4"
 
   # ── DCGM Exporter (GPU 메트릭) ──
   - job_name: dcgm
@@ -52,18 +53,19 @@ scrape_configs:
       - targets: ["dcgm_exporter:9400"]
         labels:
           server: "gpu-new"
-      # - targets: ["210.125.91.??:9400"]
-      #   labels:
-      #     server: "gpu-old1"
-      # - targets: ["210.125.91.??:9400"]
-      #   labels:
-      #     server: "gpu-old2"
-      # - targets: ["210.125.91.??:9400"]
-      #   labels:
-      #     server: "gpu-old3"
-      # - targets: ["210.125.91.??:9400"]
-      #   labels:
-      #     server: "gpu-old4"
+      # 구 서버 (gpu-old1~4)
+      - targets: ["210.125.91.90:9400"]
+        labels:
+          server: "gpu-old1"
+      - targets: ["210.125.91.91:9400"]
+        labels:
+          server: "gpu-old2"
+      - targets: ["210.125.91.92:9400"]
+        labels:
+          server: "gpu-old3"
+      - targets: ["210.125.91.93:9400"]
+        labels:
+          server: "gpu-old4"
 
 alerting:
   alertmanagers:

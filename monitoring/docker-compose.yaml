@@ -27,9 +27,11 @@ services:
     ports:
       - "127.0.0.1:9090:9090"   # localhost만 — SSH 터널로 접근
     volumes:
-      - /opt/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # 디렉터리 마운트 — 단일 파일 마운트는 에디터 atomic save 시 inode가 바뀌어
+      # 컨테이너가 옛 파일을 계속 보는 문제가 있음. 디렉터리로 마운트하면 원천 차단됨.
+      # (prometheus.yml + rules/ 를 함께 포함하므로 rules 별도 마운트 불필요)
+      - /opt/monitoring/prometheus:/etc/prometheus:ro
       - prometheus_data:/prometheus
-      - /opt/monitoring/prometheus/rules:/etc/prometheus/rules:ro
     networks:
       - monitoring
 
