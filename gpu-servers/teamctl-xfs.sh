@@ -60,6 +60,7 @@ DEFAULT_IMAGE="mlops:latest"
 DEFAULT_SHM_SIZE="16g"
 DEFAULT_IPC="host"
 DEFAULT_RESTART="unless-stopped"
+DEFAULT_PIDS_LIMIT="8192"       # 컨테이너별 최대 프로세스/스레드 수. runaway(무한 respawn 등)를 해당 컨테이너 안에 격리해 호스트·타 팀 보호. PyTorch 스레드 고려해 넉넉히 설정.
 
 # security toggles (keep simple; you can harden later)
 DEFAULT_ALLOW_SUDO="true"
@@ -622,6 +623,7 @@ ${nfs_line}
       SUDO_POLICY: "${DEFAULT_SUDO_POLICY}"
     shm_size: "${shm}"
     ipc: ${ipc}
+    pids_limit: ${DEFAULT_PIDS_LIMIT}
     ulimits:
       memlock: -1
       stack: 67108864
