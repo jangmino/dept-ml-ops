@@ -56,9 +56,20 @@ groups:
           summary: "{{ $labels.server }} — Container restart storm"
           description: "{{ $labels.server }}에서 컨테이너가 5분간 3회 이상 재시작."
 
+      # (6) 컨테이너 프로세스 수 급증 — respawn 누수(cloudflared/watchdog 등) 조기 경보
+      #     cAdvisor에 process 메트릭 그룹이 켜져 있어야 함(cadvisor command의 --disable_metrics에서 process 제외).
+      - alert: ContainerProcessLeak
+        expr: container_processes{name=~"team[0-9].*"} > 500
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.server }} — Container process leak ({{ $labels.name }})"
+          description: "{{ $labels.server }}의 {{ $labels.name }} 프로세스 수 {{ $value }}개 (>500). cloudflared/watchdog 등 무한 respawn 의심. pids_limit(8192) 도달 시 컨테이너 마비."
+
   - name: gpu_alerts
     rules:
-      # (6) DCGM exporter 다운
+      # (7) DCGM exporter 다운
       - alert: DcgmExporterDown
         expr: up{job="dcgm"} == 0
         for: 1m
@@ -68,7 +79,7 @@ groups:
           summary: "{{ $labels.server }} — DCGM exporter down"
           description: "{{ $labels.server }}의 dcgm-exporter가 1분 이상 다운 ({{ $labels.instance }})."
 
-      # (7) GPU 온도 높음 (기본 85C)
+      # (8) GPU 온도 높음 (기본 85C)
       # dcgm-exporter 버전에 따라 메트릭명이 다를 수 있어.
       # 보통 아래 메트릭 중 하나가 존재한다:
       # - DCGM_FI_DEV_GPU_TEMP
@@ -82,7 +93,7 @@ groups:
           summary: "{{ $labels.server }} — GPU temperature high (>85C)"
           description: "{{ $labels.server }}의 GPU 온도가 85°C 초과. 냉각/부하 확인 필요."
 
-      # (8) GPU 메모리 사용률 높음 (95% 이상)
+      # (9) GPU 메모리 사용률 높음 (95% 이상)
       # 대시보드에서 확인되는 메트릭에 따라 조정 가능
       - alert: GpuMemoryHigh
         expr: |

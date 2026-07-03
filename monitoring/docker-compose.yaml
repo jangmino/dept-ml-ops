@@ -89,6 +89,9 @@ services:
     command:
       - "--housekeeping_interval=10s"
       - "--docker_only=false"
+      # process 메트릭 그룹 활성화(기본 disable 목록에서 process만 제거) → container_processes/threads 노출.
+      # 주의: --enable_metrics는 allowlist라 기존 메트릭을 다 꺼버리므로 사용 금지.
+      - "--disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,referenced_memory,resctrl,sched,tcp,udp"
     networks:
       - monitoring
 
