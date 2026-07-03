@@ -13,6 +13,7 @@
 - 대용량 데이터셋·체크포인트는 **`/nfs/team`** 에 저장
 - 장시간 학습은 **`screen` 필수**
 - 파이썬 환경/패키지는 **`uv` 의무 사용**
+- **금지 행위 필독** → [README-team-policy.md](README-team-policy.md) (외부 터널링·자동 respawn·상시 서비스 호스팅 등)
 
 ---
 
