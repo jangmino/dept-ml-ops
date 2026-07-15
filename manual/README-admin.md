@@ -166,6 +166,9 @@ sudo /opt/mlops/teamctl-xfs.sh add-key team01 --key "ssh-ed25519 AAAA... team01/
 
 Bastion 사전 설정이 필요한 신규 서버라면 먼저 `bastion-init` 한 번 실행 (자세한 내용은 §14 Bastion 운영 참고).
 
+> **⚠️ 키 재사용 금지 (1키 = 1팀).** 한 사람이 두 팀 이상에 속하면 **팀마다 다른 키**를 받아 각각 등록하세요. 같은 공개키를 두 팀에 `add-key` 하면 **나중 팀이 조용히 막힙니다** — 에러 없이 등록되기 때문에 발견이 늦습니다.
+> 이유와 탐지 방법은 [§14.2 불변식](#불변식-한-줄에-한-팀-키-재사용-금지) 참고.
+
 ### 등록 확인
 
 ```bash
@@ -458,6 +461,26 @@ sudo /opt/mlops/teamctl-xfs.sh bastion-init
 
 별도 명령이 필요 없습니다.
 
+#### 불변식: 한 줄에 한 팀 (키 재사용 금지)
+
+**한 사람이 여러 팀에 속하면 팀마다 다른 키를 받으세요.** 같은 공개키를 두 팀에 `add-key` 하면 에러 없이 등록되지만 **동작은 깨집니다.**
+
+`bastion-list` 상으로는 두 줄 다 멀쩡해 보입니다:
+
+```
+permitopen="127.0.0.1:22043" ssh-ed25519 AAAA...hong   ← team21
+permitopen="127.0.0.1:22044" ssh-ed25519 AAAA...hong   ← team22 (같은 키!)
+```
+
+그러나 sshd는 **공개키가 일치하는 첫 줄에서 판정을 끝냅니다.** `permitopen`은 인증을 거절하는 옵션이 아니라 통과시킨 뒤 포워딩만 제한하는 옵션이라, `from=` 같은 옵션과 달리 **다음 줄로 넘어가지 않습니다.** 결과적으로 **먼저 등록된 팀만 접속되고 두 번째 팀은 영구히 막힙니다** (증상은 §14.7).
+
+이 불변식은 **`remove`의 안전성에도 걸려 있습니다.** `remove_bastion_keys_for_team`은 포트 문자열로 줄을 통째로 지우므로(`grep -vF 'permitopen="127.0.0.1:<port>"'`), 한 줄이 두 팀을 서빙하는 상태였다면 **한 팀 삭제가 다른 팀 접근까지 날립니다.**
+
+> **손으로 `permitopen`을 콤마로 합치는 우회(`permitopen="127.0.0.1:22043",permitopen="127.0.0.1:22044" ssh-ed25519 AAAA...`)는 권장하지 않습니다.**
+> 당장은 동작하고 `add-key` 재실행에도 살아남지만, **`remove`(둘 중 아무 팀이나) 또는 `bastion-sync` 한 번이면 조용히 원복됩니다** — `bastion-sync`는 (팀, 키) 쌍마다 한 줄씩 재생성하기 때문입니다. 응급 조치로만 쓰고 팀별 키로 정리하세요.
+
+팀원용 안내는 [README-team.md의 「여러 팀에 속한 경우」](README-team.md#여러-팀에-속한-경우--팀마다-키를-따로-만드세요) 참고.
+
 ### 14.3 기존 서버 마이그레이션 (도입 시 1회)
 
 bastion 도입 이전부터 운영하던 서버는 팀별 authorized_keys만 있고 bastion에는 비어 있습니다. 한번에 모든 팀의 키를 bastion으로 동기화:
@@ -477,6 +500,19 @@ sudo cat /home/jump/.ssh/authorized_keys
 ```
 
 각 라인 형식: `permitopen="127.0.0.1:<port>" ssh-ed25519 AAAA... <comment>`
+
+**키 재사용 감사** — 같은 공개키가 두 팀 이상에 등록되어 있으면 나중 팀이 막힙니다([§14.2 불변식](#불변식-한-줄에-한-팀-키-재사용-금지)). 정기 점검 권장:
+
+```bash
+# 중복 키 탐지 — 출력이 비어 있으면 정상
+sudo awk '{for(i=1;i<=NF;i++) if($i ~ /^AAAA/) print $i}' /home/jump/.ssh/authorized_keys \
+  | sort | uniq -d
+
+# 중복이 나왔다면 어느 팀들에 걸려 있는지 확인
+sudo grep -F "<위에서 나온 키 블롭>" /home/jump/.ssh/authorized_keys
+```
+
+중복이 발견되면 해당 학생에게 **팀별 키 재발급**을 요청하고, 새 키로 `add-key` 한 뒤 옛 줄을 정리하세요.
 
 ### 14.5 접속 로그 확인
 
@@ -512,6 +548,7 @@ sudo ufw allow 80/tcp
 ### 14.7 트러블슈팅
 
 **증상: 학생이 ProxyJump 접속 시 `channel 0: open failed: administratively prohibited`**
+- **먼저 의심할 것 — 키 재사용.** 그 학생이 두 팀 이상에 속하고 **같은 키로 등록**되어 있는지 확인. 이 경우 **먼저 등록된 팀만 접속되고 나중 팀만 이 에러**가 납니다 ([§14.2 불변식](#불변식-한-줄에-한-팀-키-재사용-금지)). 탐지는 §14.4의 중복 키 감사 명령 → 해결은 팀별 키 재발급
 - `bastion-list`에서 해당 학생 키가 등록되어 있는지 확인
 - 등록되어 있어도 `permitopen` 포트가 본인 팀 포트와 일치하는지 확인
 - sshd 전역에서 TCP 포워딩이 켜져 있는지: `sudo sshd -T -C user=jump | grep allowtcpforwarding`

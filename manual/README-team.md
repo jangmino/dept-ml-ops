@@ -48,6 +48,8 @@
 > **주의:** `-C` 옵션에 반드시 `팀명/팀원식별자` 형식을 사용하세요.
 > 예: `team01/jangmin`, `team01/minji`, `team02/soyeon`
 > 파일명도 아래 예시 참고하여 팀명_팀원식별자로 하길 권장
+>
+> **키는 사람 단위가 아니라 팀 단위입니다 (1키 = 1팀).** 여러 팀에 속해 있다면 팀마다 키를 따로 만들어야 합니다 → [여러 팀에 속한 경우](#여러-팀에-속한-경우--팀마다-키를-따로-만드세요)
 
 ### Mac / Linux
 
@@ -63,10 +65,27 @@ ssh-keygen -t ed25519 -C "team01/jangmin" -f $env:USERPROFILE\.ssh\id_ed25519_te
 type $env:USERPROFILE\.ssh\id_ed25519_team01_jangmin.pub
 ```
 
+### 여러 팀에 속한 경우 — 팀마다 키를 따로 만드세요
+
+한 사람이 두 개 이상의 팀 컨테이너를 사용하는 경우(예: 같은 서버에서 GPU를 2장 독립적으로 사용), **팀마다 별도의 키를 만들어야 합니다.** 같은 키를 두 팀에 재사용하면 **먼저 등록된 팀만 접속되고 나머지 팀은 막힙니다.**
+
+```bash
+# team21용
+ssh-keygen -t ed25519 -C "team21/hong" -f ~/.ssh/id_ed25519_team21_hong
+
+# team22용 — 같은 사람이어도 반드시 별도의 키
+ssh-keygen -t ed25519 -C "team22/hong" -f ~/.ssh/id_ed25519_team22_hong
+```
+
+**왜 재사용하면 안 되나?** bastion은 등록된 공개키마다 *"이 키는 이 팀 포트로만 갈 수 있다"* 는 제한을 겁니다. 즉 **키가 곧 팀 출입증**이라, 소속 팀이 둘이면 출입증도 둘이어야 합니다. 같은 키를 두 팀에 등록하면 bastion이 그 키를 찾은 **첫 줄에서 판정을 끝내기 때문에**, 두 번째 팀은 인증은 통과하지만 터널이 거부됩니다 → [(D) 항목](#d-administratively-prohibited-으로-접속-거부) 참조.
+
+키를 팀별로 나누면 팀에서 빠질 때 해당 팀 키만 회수되므로, 남은 팀 접속에 영향이 없다는 장점도 있습니다.
+
 ### 관리자에게 전달
 
 - ✅ **전달할 것:** `.pub` 공개키 내용 (한 줄)
 - ❌ **절대 공유 금지:** 비밀키 파일 (`id_ed25519_...`)
+- 여러 팀 소속이면 **팀별 `.pub`를 각각, 어느 팀 것인지 명시**해서 전달하세요.
 
 ---
 
@@ -118,6 +137,8 @@ Host ss-team01
 > **포인트**: `ss-team01` 블록의 `HostName 127.0.0.1`은 본인 노트북이 아니라 **bastion이 본 자기 localhost** 라는 의미입니다. bastion이 받은 요청을 같은 호스트의 22021 포트로 터널링합니다.
 >
 > **본인이 다른 서버 팀이면** (예: team23 → gpu-old2 → 22043): `bastion-gpu-old2` 블록을 추가하고, 컨테이너 블록의 `ProxyJump`를 그것으로 바꾸세요. 본인 팀이 속한 서버의 bastion만 추가하면 됩니다 (모든 서버를 다 적을 필요 없음).
+>
+> **두 개 이상의 팀에 속해 있다면** bastion 블록도 팀마다 필요합니다 → [아래 절](#여러-팀에-속한-경우--bastion-블록도-팀마다-따로) 참조.
 
 ### 서버별 bastion HostName 참고표
 
@@ -128,6 +149,50 @@ Host ss-team01
 | gpu-old2 | `<관리자 안내>` |
 | gpu-old3 | `<관리자 안내>` |
 | gpu-old4 | `<관리자 안내>` |
+
+### 여러 팀에 속한 경우 — bastion 블록도 팀마다 따로
+
+bastion 블록은 `IdentityFile`을 **하나만** 지정할 수 있으므로, 소속 팀이 둘이면 **bastion 블록도 둘**이어야 합니다. 같은 서버라서 `HostName`이 같아도 무방합니다 — `Host` 별칭은 설정 묶음의 이름일 뿐입니다.
+
+예시: 홍길동이 gpu-old2에서 team21(22043)과 team22(22044)를 함께 사용하는 경우.
+
+```
+# ---- team21 ----
+Host bastion-gpu-old2-team21
+  HostName <gpu-old2 IP>
+  Port 22
+  User jump
+  IdentityFile ~/.ssh/id_ed25519_team21_hong
+  IdentitiesOnly yes
+
+Host ss-team21
+  HostName 127.0.0.1
+  Port 22043
+  User team21
+  IdentityFile ~/.ssh/id_ed25519_team21_hong
+  IdentitiesOnly yes
+  ProxyJump bastion-gpu-old2-team21
+  ServerAliveInterval 30
+
+# ---- team22 ---- (HostName은 같지만 키가 다르므로 블록을 분리)
+Host bastion-gpu-old2-team22
+  HostName <gpu-old2 IP>
+  Port 22
+  User jump
+  IdentityFile ~/.ssh/id_ed25519_team22_hong
+  IdentitiesOnly yes
+
+Host ss-team22
+  HostName 127.0.0.1
+  Port 22044
+  User team22
+  IdentityFile ~/.ssh/id_ed25519_team22_hong
+  IdentitiesOnly yes
+  ProxyJump bastion-gpu-old2-team22
+  ServerAliveInterval 30
+```
+
+> **포인트**: bastion 블록과 컨테이너 블록의 `IdentityFile`은 **같은 팀 키로 맞춰야** 합니다. 두 홉(bastion·컨테이너) 모두 그 키로 인증하기 때문입니다. 여기를 섞어 쓰면 접속이 실패합니다.
 
 ### 접속 방법
 
@@ -283,6 +348,21 @@ ssh -vvv ss-team01
 ### (C) `/nfs/team`이 보이지 않거나 접근 불가
 
 NFS 마운트 문제일 수 있습니다. 관리자에게 문의하세요.
+
+### (D) `administratively prohibited` 으로 접속 거부
+
+```
+channel 0: open failed: administratively prohibited: open failed
+```
+
+**여러 팀에 같은 키를 재사용했을 때** 나타나는 증상입니다. bastion 인증까지는 통과했지만(그래서 비밀번호/키 에러가 아님), 그 키에 허용된 팀 포트가 아니라서 터널이 거부된 상태입니다.
+
+전형적으로 **먼저 등록한 팀은 정상 접속되고, 나중 팀만 이 에러가 납니다.**
+
+**해결:** 해당 팀용 키를 **새로 만들어서** 관리자에게 전달하고, ssh config의 bastion·컨테이너 블록을 그 키로 맞추세요.
+→ [여러 팀에 속한 경우 (키 생성)](#여러-팀에-속한-경우--팀마다-키를-따로-만드세요) / [여러 팀에 속한 경우 (ssh config)](#여러-팀에-속한-경우--bastion-블록도-팀마다-따로)
+
+> 한 팀만 쓰는데도 이 에러가 난다면 키 문제가 아닐 수 있으니 (B)의 `ssh -vvv` 로그를 관리자에게 전달하세요.
 
 ---
 
