@@ -210,3 +210,6 @@ CLAUDE.md
 
 # Monitoring secrets
 monitoring/.env
+
+# 실제 접속 정보가 채워진 로컬 전용 문서 (BMC IP/계정 등)
+*.local.md
