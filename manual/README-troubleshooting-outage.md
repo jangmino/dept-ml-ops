@@ -236,6 +236,14 @@ docker exec <컨테이너> ps aux --sort=-%cpu | head -20
 컨테이너는 팀·모니터링 모두 `restart: unless-stopped`라 **자동으로 올라온다.**
 문제는 "올라왔는가"가 아니라 **"제대로 올라왔는가"** 다. 아래 3개가 조용히 깨지는 지점이다.
 
+> 💡 **팀 컨테이너 쪽(5-1 GPU · 5-2 NFS · 5-3 쿼터)은 한 방에 확인할 수 있다.**
+> ```bash
+> /opt/mlops/check-teams.sh              # 전체 팀
+> /opt/mlops/check-teams.sh team01 team02
+> ```
+> 읽기 전용이라 조교에게 맡겨도 안전하다. 문제가 있으면 `!!` 로 표시되고 종료 코드가 1이 된다.
+> 아래 5-1~5-4는 그 스크립트가 무엇을 왜 보는지에 대한 설명이자, 문제 발견 시의 수동 확인 절차다.
+
 ### 5-1. NVIDIA 드라이버 ⚠️ 최우선
 
 ```bash
@@ -260,8 +268,13 @@ ls /mnt/nfs/teams/                       # 팀 디렉터리가 보이는지
 systemctl status mnt-nfs-teams.automount
 
 # ★ 컨테이너 안에서 확인 — 이게 진짜 검사
-docker exec team01_gpu0 df -h /nfs/team  # nfs 타입으로 잡혀야 정상
-docker exec team01_gpu0 ls /nfs/team
+# ⚠️ 반드시 -u <팀계정> 을 붙일 것. docker exec는 기본이 root인데,
+#    NFS export가 root_squash라 root는 nobody로 강등되어 항상 Permission denied가 난다.
+#    (팀 디렉터리는 chmod 2770 → others 권한 0. root로 ls가 되면 오히려 격리 붕괴다.)
+docker exec -u team01 team01_gpu0 df -h /nfs/team   # 210.125.91.94:/teams/team01 로 나와야 정상
+docker exec -u team01 team01_gpu0 id                # uid=12001(team01) 확인
+docker exec -u team01 team01_gpu0 ls -la /nfs/team
+docker exec -u team01 team01_gpu0 sh -c 'touch /nfs/team/.wtest && rm /nfs/team/.wtest && echo WRITE-OK'
 ```
 
 > **왜 위험한가:** `/mnt/nfs/teams`는 `x-systemd.automount`(autofs) 마운트포인트다.
